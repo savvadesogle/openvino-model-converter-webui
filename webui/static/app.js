@@ -6,6 +6,7 @@ const state = {
   info: null, modes: [], sources: [], converted: [],
   dlInfo: null, cvInfo: null, currentMode: null, currentTask: null,
   taskActive: false, taskKind: null, dlFiles: null, dlSelected: null, dlLocalComplete: null,
+  validatedSub: null, dlSubDirty: false,
 };
 let activeProgressId = null;
 let dlLocalDebounce = null;
@@ -190,6 +191,15 @@ function bindEvents() {
     const v = $("dl-sub").value;
     const n = normalizeSub(v);
     if (n !== v) $("dl-sub").value = n;
+    if (state.validatedSub && state.validatedSub !== n && $("dl-info") && state.dlInfo && state.dlInfo.kind === "hf") {
+      state.dlSubDirty = true;
+      const box = $("dl-local");
+      if (box) {
+        box.className = "banner show bad";
+        box.textContent = "Model folder changed from " + state.validatedSub + " to " + n + " — Download is blocked. Re-run Validate to confirm the change.";
+      }
+      updateDlChecks();
+    }
     updateDirLink();
     clearTimeout(dlLocalDebounce);
     dlLocalDebounce = setTimeout(() => {
@@ -352,6 +362,8 @@ function renderDlInfo(res) {
     state.dlFiles = null;
     state.dlSelected = null;
     state.dlNeededBytes = 0;
+    state.dlSubDirty = false;
+    state.validatedSub = null;
     setInfo("dl-info", "Validation failed: " + (i && i.error ? i.error : "unknown error"), "bad");
     $("dl-files").classList.remove("show");
     $("dl-files").textContent = "";
@@ -402,8 +414,19 @@ function renderDlInfo(res) {
     const org = i.id.split("/")[0];
     const name = i.id.split("/")[1];
     $("dl-sub").value = org + "/" + name;
+    state.validatedSub = normalizeSub($("dl-sub").value);
+    state.dlSubDirty = false;
     const root = $("dl-root").value.trim();
-    if (!root || root === "T:\\models" || root === "T:/models") $("dl-root").value = (state.info && state.info.paths.originals) || "T:\\models";
+    if (!root) {
+      const orig = (state.info && state.info.paths && state.info.paths.originals) || "";
+      const m = /^([A-Za-z]:)[\\/]/.exec(orig);
+      if (m) {
+        setDriveOption(m[1]);
+        $("dl-root").value = orig.slice(m[0].length).replace(/^[\\/]+/, "");
+      } else {
+        $("dl-root").value = orig.replace(/^[\\/]+/, "");
+      }
+    }
     updateDirLink();
     state.dlNeededBytes = i.total_bytes;
     state.dlFiles = i.files || [];
@@ -412,31 +435,78 @@ function renderDlInfo(res) {
 }
 function osSep() { return ((navigator.platform || "") + " " + (navigator.userAgent || "")).indexOf("Win") !== -1 ? "\\" : "/"; }
 function composeDest() {
-  const root = $("dl-root").value.trim().replace(/[\\/]+$/, "");
-  const sub = $("dl-sub").value.trim().replace(/^[\\/]+/, "").split(/[\\/]+/).join(osSep());
-  return root + osSep() + sub;
+  const drv = $("dl-drive").value.trim().replace(/[\\/]+$/, "");
+  const root = $("dl-root").value.trim().replace(/^[\\/]+/, "");
+  const sub = normalizeSub($("dl-sub").value);
+  let base = root ? drv + osSep() + root : drv;
+  return sub ? base + osSep() + sub : base;
 }
 async function loadDrives() {
   const d = await api("/api/drives");
   const sel = $("dl-drive");
   if (!sel) return;
   sel.innerHTML = "";
-  (d.drives || []).forEach((drv) => {
+  const drvList = (d.drives || []).filter(Boolean);
+  drvList.forEach((drv) => {
     const o = document.createElement("option");
     o.value = drv;
     o.textContent = drv;
     sel.appendChild(o);
   });
+  // default drive to the drive of originals, and keep only the relative path in #dl-root
+  const orig = (state.info && state.info.paths && state.info.paths.originals) || "";
+  const m = /^([A-Za-z]:)[\\/]/.exec(orig);
+  let defDrive = null;
+  let defRoot = "";
+  if (m) {
+    defDrive = m[1] + osSep();
+    defRoot = orig.slice(m[0].length);
+  } else if (osSep() === "/" && orig.startsWith("/")) {
+    defDrive = "/";
+    defRoot = orig.replace(/^\/+/, "");
+  }
+  if (defDrive) {
+    if (![...sel.options].some((o) => o.value === defDrive)) {
+      const o = document.createElement("option");
+      o.value = defDrive;
+      o.textContent = defDrive;
+      sel.appendChild(o);
+    }
+    sel.value = defDrive;
+  }
+  if (defRoot !== "") $("dl-root").value = defRoot;
   syncDriveFromRoot();
+}
+function setDriveOption(drive) {
+  const sel = $("dl-drive");
+  if (!sel) return;
+  if (drive && ![...sel.options].some((o) => o.value === drive)) {
+    const o = document.createElement("option");
+    o.value = drive;
+    o.textContent = drive;
+    sel.appendChild(o);
+  }
+  if (drive) sel.value = drive;
 }
 function syncDriveFromRoot() {
   const sel = $("dl-drive");
   if (!sel) return;
   const root = $("dl-root").value.trim();
   const m = /^([A-Za-z]:)[\\/]/.exec(root);
-  let drive = m ? m[1] : null;
-  if (!drive && osSep() === "/" && root.startsWith("/")) drive = "/";
-  if (!drive) return;
+  if (!m) {
+    if (osSep() === "/" && root.startsWith("/")) {
+      const drive = "/";
+      if (![...sel.options].some((o) => o.value === drive)) {
+        const o = document.createElement("option");
+        o.value = drive;
+        o.textContent = drive;
+        sel.appendChild(o);
+      }
+      sel.value = drive;
+    }
+    return;
+  }
+  const drive = m[1];
   if (![...sel.options].some((o) => o.value === drive)) {
     const o = document.createElement("option");
     o.value = drive;
@@ -451,11 +521,8 @@ function syncRootFromDrive() {
   const newDrive = sel.value;
   if (!newDrive) return;
   const root = $("dl-root").value.trim();
-  let rest = "";
-  const m = /^[A-Za-z]:[\\/]/.exec(root);
-  if (m) rest = root.slice(m[0].length);
-  else if (osSep() === "/" && root.startsWith("/")) rest = root.replace(/^\/+/, "");
-  $("dl-root").value = rest ? newDrive + osSep() + rest : newDrive;
+  let rest = root.replace(/^[A-Za-z]:[\\/]/, "").replace(/^[\\/]+/, "");
+  $("dl-root").value = rest;
   updateDirLink();
   clearTimeout(dlLocalDebounce);
   dlLocalDebounce = setTimeout(updateLocalStatus, 250);
@@ -520,8 +587,10 @@ async function updateLocalStatus() {
   }
   state.dlLocalComplete = r.complete;
   state.dlLocalExists = r.exists === true;
-  const chk = $("dl-check");
-  if (chk) chk.hidden = !(state.dlLocalComplete === true);
+  if (state.dlInfo && state.dlInfo.kind === "hf") {
+    if (state.dlLocalComplete === true) setStage("download", "done");
+    else clearStage("download");
+  }
   updateDirLink();
   $("dl-dest-card").classList.toggle("done", state.dlLocalComplete === true);
   $("dl-dest-card").classList.toggle("pending", state.dlInfo && state.dlInfo.kind === "hf" && state.dlLocalComplete !== true);
@@ -530,7 +599,7 @@ async function updateLocalStatus() {
   updateDlChecks();
 }
 function normalizeSub(v) { return v.trim().replace(/[\\/]+/g, osSep()); }
-function subValid(v) { return /^[A-Za-z0-9_.-]+[/\\][A-Za-z0-9_.-]+$/.test(v.trim()); }
+function subValid(v) { return /^[A-Za-z0-9_.-]+([/\\])[A-Za-z0-9_.-]+$/.test(v.trim()); }
 function updateDlChecks() {
   const i = state.dlInfo;
   setSelectBtns();
@@ -555,7 +624,8 @@ function updateDlChecks() {
     okDisk ? `Disk: OK (free ${gb(free)} GB ≥ needed ${gb(needed)} GB)` : `Disk: NOT ENOUGH (free ${gb(free)} GB < needed ${gb(needed)} GB)`));
   const dlBtn = $("dl-run");
   const hasSel = state.dlSelected && state.dlSelected.size > 0;
-  dlBtn.disabled = !(okDisk && i.kind === "hf" && i.info.ok && state.dlLocalComplete === false && hasSel && subOk);
+  const blocked = state.dlSubDirty === true;
+  dlBtn.disabled = !(okDisk && i.kind === "hf" && i.info.ok && state.dlLocalComplete === false && hasSel && subOk && !blocked);
 }
 async function runDownload() {
   if (!state.dlInfo || state.dlInfo.kind !== "hf") return;
@@ -882,6 +952,10 @@ function setStage(name, status) {
   if (!n) return;
   n.classList.remove("running", "done", "fail");
   n.classList.add(status);
+}
+function clearStage(name) {
+  const n = stageNode(name);
+  if (n) n.classList.remove("running", "done", "fail");
 }
 function appendLog(text) {
   const log = $("task-log");
