@@ -48,6 +48,7 @@ def validate_model_id(model_id: str, token: str | None = None) -> dict:
     """Check the model exists on the Hub and return metadata for the UI."""
     from huggingface_hub import HfApi
 
+    token = (token or "").strip() or None
     api = HfApi(token=token)
     try:
         info = api.model_info(model_id, files_metadata=True)
@@ -133,7 +134,7 @@ def download(model_id: str, dest: str | Path, *, revision: str | None = None,
     S.ensure_dirs()
     S.apply_env()
     # never require the token to travel through the config file: read from env as fallback
-    token = token or os.environ.get("HF_TOKEN") or None
+    token = (token or os.environ.get("HF_TOKEN") or "").strip() or None
     dest = Path(dest)
     dest.mkdir(parents=True, exist_ok=True)
     allow_patterns = CONVERT_INCLUDE if include_only else None

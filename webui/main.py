@@ -119,7 +119,7 @@ def api_hf_validate(body: HfValidateIn):
     local = parse_hf_id(body.text)
     if not local:
         raise HTTPException(400, "Not a valid HF model id or local path.")
-    token = body.token or os.environ.get("HF_TOKEN")
+    token = (body.token or "").strip() or os.environ.get("HF_TOKEN") or None
     return {"kind": "hf", "info": validate_model_id(local, token)}
 
 

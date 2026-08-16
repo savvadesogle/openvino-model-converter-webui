@@ -81,7 +81,7 @@ async function validateDownload() {
   if (!text) return setInfo("dl-info", "Enter a model link / id / path.", "bad");
   setInfo("dl-info", "Validating…", "ok");
   try {
-    const res = await api("/api/hf/validate", { method: "POST", body: JSON.stringify({ text, token: $("dl-token").value }) });
+    const res = await api("/api/hf/validate", { method: "POST", body: JSON.stringify({ text, token: $("dl-token").value || null }) });
     state.dlInfo = res;
     renderDlInfo(res);
     updateDlChecks();
