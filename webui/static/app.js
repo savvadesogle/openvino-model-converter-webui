@@ -100,7 +100,7 @@ function bindEvents() {
   $("dl-sub").addEventListener("input", onDestInput);
   $("dl-files").addEventListener("change", () => {
     state.dlSelected = new Set();
-    document.querySelectorAll("#dl-files input[type=checkbox]:checked").forEach((cb) => state.dlSelected.add(cb.value));
+    document.querySelectorAll("#dl-files input[type=checkbox]:checked:not(:disabled)").forEach((cb) => state.dlSelected.add(cb.value));
     updateDlChecks();
   });
   $("dl-all").addEventListener("click", () => setFilesAll(true));
@@ -110,12 +110,17 @@ function bindEvents() {
   $("cv-mode").addEventListener("change", onModeChange);
   $("cv-selftest").addEventListener("click", runSelfTest);
   $("cv-run").addEventListener("click", runConvert);
-  $("task-cancel").addEventListener("click", () => api("/api/task/cancel", { method: "POST" }).catch(() => {}));
+  const cancelTask = () => api("/api/task/cancel", { method: "POST" }).catch(() => {});
+  $("task-cancel").addEventListener("click", cancelTask);
   $("task-cancel").disabled = true;
+  $("dl-cancel").addEventListener("click", cancelTask);
+  $("cv-cancel").addEventListener("click", cancelTask);
   $("task-clear").addEventListener("click", () => { $("task-log").innerHTML = ""; $("stages").innerHTML = ""; });
   $("task-collapse").addEventListener("click", () => {
     $("task-panel").classList.toggle("collapsed");
-    $("task-collapse").textContent = $("task-panel").classList.contains("collapsed") ? "▴" : "▾";
+    const collapsed = $("task-panel").classList.contains("collapsed");
+    $("task-collapse").textContent = collapsed ? "▾" : "▴";
+    $("task-collapse").title = collapsed ? "Expand" : "Collapse";
   });
 }
 
@@ -125,60 +130,76 @@ function setInfo(container, text, kind) {
   c.textContent = text || "";
   c.className = "info" + (text ? " show " + (kind || "ok") : "");
 }
+function ensureTaskPanel() {
+  $("task-panel").classList.remove("collapsed");
+  const btn = $("task-collapse");
+  btn.textContent = "▴";
+  btn.title = "Collapse";
+  renderStages("validate");
+  const chip = $("task-status");
+  chip.textContent = "validating…";
+  chip.className = "chip busy";
+}
 async function validateDownload() {
   const text = $("dl-text").value.trim();
   if (!text) return setInfo("dl-info", "Enter a model link / id / path.", "bad");
   setInfo("dl-info", "Validating…", "ok");
-  if (!state.taskActive) {
-    renderStages("validate");
-    setStage("validate", "running");
-    appendLog("validating " + text + " ...");
-  }
+  ensureTaskPanel();
+  setStage("validate", "running");
+  appendLog("validating " + text + " ...");
   try {
     const res = await api("/api/hf/validate", { method: "POST", body: JSON.stringify({ text, token: $("dl-token").value || null }) });
     state.dlInfo = res;
     renderDlInfo(res);
     await updateLocalStatus();
     updateDlChecks();
-    if (!state.taskActive) {
-      if (res.info && res.info.ok) {
-        setStage("validate", "done");
-        appendLog(`validate: ${res.info.id} (${res.info.total_gb} GB, ${res.info.files} files)`);
-        if (res.info.local_complete) appendLog("already downloaded locally: " + res.info.local_dir);
-        if (res.info.local_exists && !res.info.local_complete) appendLog("local copy exists but incomplete (missing: " + res.info.local_missing.length + " files)");
-      } else {
-        setStage("validate", "fail");
-      }
+    if (res.info && res.info.ok) {
+      setStage("validate", "done");
+      $("task-status").textContent = "validated";
+      $("task-status").className = "chip done";
+      appendLog(`validate: ${res.info.id} (${res.info.total_gb} GB, ${res.info.files} files)`);
+      if (res.info.local_complete) appendLog("already downloaded locally: " + res.info.local_dir);
+      if (res.info.local_exists && !res.info.local_complete) appendLog("local copy exists but incomplete (missing: " + res.info.local_missing.length + " files)");
+    } else {
+      setStage("validate", "fail");
+      $("task-status").textContent = "failed";
+      $("task-status").className = "chip";
     }
   } catch (e) {
     setInfo("dl-info", "Error: " + e.message, "bad");
     state.dlInfo = null;
     state.dlFiles = null;
     state.dlSelected = null;
-    if (!state.taskActive) {
-      setStage("validate", "fail");
-      appendLog("validate failed: " + e.message);
-    }
+    setStage("validate", "fail");
+    $("task-status").textContent = "failed";
+    $("task-status").className = "chip";
+    appendLog("validate failed: " + e.message);
   }
+  const log = $("task-log");
+  log.scrollTop = log.scrollHeight;
+  $("task-panel").scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
-function renderFilePicker(filesMeta) {
+function renderFilePicker(filesMeta, presentFiles) {
   const box = $("dl-files");
   if (!box) return;
   box.innerHTML = "";
   state.dlSelected = new Set();
   const files = filesMeta || [];
   if (!files.length) { box.classList.remove("show"); return; }
+  const present = new Set(presentFiles || []);
   for (const f of files) {
-    const label = el("label", "check");
+    const isPresent = present.has(f.name);
+    const label = el("label", "check " + (isPresent ? "present" : "missing"));
     const cb = document.createElement("input");
     cb.type = "checkbox";
     cb.value = f.name;
     cb.checked = true;
+    if (isPresent) cb.disabled = true;
     label.appendChild(cb);
-    label.appendChild(document.createTextNode(f.name));
+    label.appendChild(el("span", "fname", f.name));
     label.appendChild(el("span", "fsize", "(" + humanSize(f.size) + ")"));
     box.appendChild(label);
-    state.dlSelected.add(f.name);
+    if (cb.checked && !cb.disabled) state.dlSelected.add(f.name);
   }
   box.classList.add("show");
 }
@@ -187,6 +208,7 @@ function setFilesAll(value) {
   if (!box) return;
   state.dlSelected = new Set();
   box.querySelectorAll("input[type=checkbox]").forEach((cb) => {
+    if (cb.disabled) return;
     cb.checked = value;
     if (value) state.dlSelected.add(cb.value);
   });
@@ -224,11 +246,12 @@ function renderDlInfo(res) {
     if (i.gated) html += "\n⚠ GATED — needs an HF token";
     const files = i.files_meta || [];
     if (files.length) {
+      const totalBytes = files.reduce((s, f) => s + (Number(f.size) || 0), 0);
       html += "\n<table class=\"mini-table\"><thead><tr><th>File</th><th>Size</th><th>Purpose</th></tr></thead><tbody>";
       for (const f of files) {
         html += "<tr><td>" + esc(f.name) + "</td><td>" + esc(humanSize(f.size)) + "</td><td>" + esc(filePurpose(f.name)) + "</td></tr>";
       }
-      html += "</tbody></table>";
+      html += "</tbody><tfoot><tr><td>Total</td><td>" + esc(humanSize(totalBytes)) + "</td><td></td></tr></tfoot></table>";
     }
     const infoBox = $("dl-info");
     infoBox.innerHTML = html;
@@ -245,7 +268,9 @@ function renderDlInfo(res) {
   }
 }
 function composeDest() {
-  return $("dl-root").value.trim().replace(/[\\/]+$/, "") + "\\" + $("dl-sub").value.trim().replace(/^[\\/]+/, "");
+  const root = $("dl-root").value.trim().replace(/[\\/]+$/, "");
+  const sub = $("dl-sub").value.trim().replace(/^[\\/]+/, "").replace(/\//g, "\\");
+  return root + "\\" + sub;
 }
 function updateDestPreview() {
   $("dl-dest-preview").textContent = composeDest();
@@ -276,12 +301,13 @@ async function updateLocalStatus() {
     box.textContent = "Already downloaded locally — Download disabled";
   } else if (r.present > 0) {
     box.className = "checkline bad";
-    box.textContent = "Local copy exists but incomplete — missing " + missingN + " of " + M + " files";
+    box.textContent = "Local copy exists but incomplete — missing " + missingN + " of " + M + " files: " + ((r.missing || []).join(", "));
   } else {
     box.className = "checkline ok";
     box.textContent = "Not present locally — will download " + M + " files";
   }
   state.dlLocalComplete = r.complete;
+  renderFilePicker(state.dlInfo.info.files_meta || [], r.present_files || []);
   updateDlChecks();
 }
 function updateDlChecks() {
@@ -535,15 +561,21 @@ async function startTask(kind, body, url) {
   state.currentTask = id;
   renderStages(kind);
   $("task-panel").classList.remove("collapsed");
-  $("task-collapse").textContent = "▾";
+  $("task-collapse").textContent = "▴";
+  $("task-collapse").title = "Collapse";
   appendLog("task started: " + id + " (" + kind + ")");
   appendLog("\n— task " + id + " (" + kind + ") —");
   $("task-status").textContent = "running";
   $("task-status").className = "chip busy";
   state.taskActive = true;
   $("task-cancel").disabled = false;
+  const isDl = kind === "download";
+  $("dl-spinner").hidden = !isDl;
+  $("cv-spinner").hidden = isDl;
+  $("dl-cancel").hidden = !isDl;
+  $("cv-cancel").hidden = isDl;
   ["dl-run", "cv-run"].forEach((b) => { const el = $(b); el.disabled = true; el.classList.add("working"); });
-  activeProgressId = kind === "download" ? "dl-progress" : "cv-progress";
+  activeProgressId = isDl ? "dl-progress" : "cv-progress";
   ["dl-progress", "cv-progress"].forEach((id) => {
     const bar = $(id);
     bar.querySelector(".fill").style.width = "0%";
@@ -567,6 +599,10 @@ function resetTaskUi() {
   state.taskActive = false;
   $("task-cancel").disabled = true;
   activeProgressId = null;
+  $("dl-spinner").hidden = true;
+  $("cv-spinner").hidden = true;
+  $("dl-cancel").hidden = true;
+  $("cv-cancel").hidden = true;
   ["dl-run", "cv-run"].forEach((b) => { const el = $(b); el.disabled = false; el.classList.remove("working"); });
   ["dl-progress", "cv-progress"].forEach((id) => {
     const bar = $(id);
@@ -615,6 +651,16 @@ async function pollStatus() {
     if (s.task && s.task.kind) {
       $("task-status").textContent = s.busy ? "running" : (s.done ? "finished" : "idle");
       $("task-status").className = "chip " + (s.busy ? "busy" : s.done ? "done" : "");
+      const isDl = s.task.kind === "download";
+      $("dl-spinner").hidden = !(s.busy && isDl);
+      $("cv-spinner").hidden = !(s.busy && !isDl);
+      $("dl-cancel").hidden = !(s.busy && isDl);
+      $("cv-cancel").hidden = !(s.busy && !isDl);
+    } else {
+      $("dl-spinner").hidden = true;
+      $("cv-spinner").hidden = true;
+      $("dl-cancel").hidden = true;
+      $("cv-cancel").hidden = true;
     }
   } catch (e) {}
   setTimeout(pollStatus, 3000);

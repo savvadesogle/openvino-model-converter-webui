@@ -9,7 +9,7 @@
 <body>
 
 <header>
-  <div class="brand"><span class="logo">◈</span> OpenVINO Model Converter</div>
+  <div class="brand">OpenVINO Model Converter</div>
   <div id="versions" class="chips"></div>
 </header>
 <div id="paths" class="paths mono"></div>
@@ -56,7 +56,7 @@
     <div id="dl-files" class="filelist"></div>
     <div id="dl-disk" class="checkline"></div>
     <div id="dl-ram" class="checkline"></div>
-    <div class="row"><button id="dl-run" class="primary" disabled>Download</button><div class="progress" id="dl-progress"><div class="fill"></div></div></div>
+    <div class="row"><button id="dl-run" class="primary" disabled>Download</button><span class="spinner" id="dl-spinner" hidden></span><button id="dl-cancel" class="danger" hidden>Cancel</button><div class="progress" id="dl-progress"><div class="fill"></div></div></div>
   </div>
 
 </section>
@@ -147,7 +147,7 @@
     <div id="cv-disk" class="checkline"></div>
     <div id="cv-ram" class="checkline"></div>
     <div id="cv-errors" class="errors"></div>
-    <div class="row"><button id="cv-run" class="primary" disabled>Convert</button><div class="progress" id="cv-progress"><div class="fill"></div></div></div>
+    <div class="row"><button id="cv-run" class="primary" disabled>Convert</button><span class="spinner" id="cv-spinner" hidden></span><button id="cv-cancel" class="danger" hidden>Cancel</button><div class="progress" id="cv-progress"><div class="fill"></div></div></div>
   </div>
 
 </section>
@@ -156,7 +156,7 @@
 
 <!-- ============================================================ TASK -->
 <section id="task-panel" class="card task">
-  <div class="task-head"><h2>Task <span id="task-status" class="chip"></span></h2><button id="task-collapse" class="secondary" title="Collapse/expand log">▾</button></div>
+  <div class="task-head"><h2>Task <span id="task-status" class="chip"></span></h2><button id="task-collapse" class="secondary" title="Collapse">▴</button></div>
   <div id="stages" class="stages"></div>
   <pre id="task-log"></pre>
   <div class="row">

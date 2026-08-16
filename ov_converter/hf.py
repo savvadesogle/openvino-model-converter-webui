@@ -62,6 +62,19 @@ def validate_model_id(model_id: str, token: str | None = None) -> dict:
 
     tags = info.tags or []
     gated = bool(getattr(info, "gated", None))
+
+    license = getattr(info, "license", None)
+    card_data = getattr(info, "card_data", None)
+    if not license and card_data is not None:
+        license = card_data.get("license") if isinstance(card_data, dict) else getattr(card_data, "license", None)
+    if not license:
+        for tag in tags:
+            if tag.startswith("license:"):
+                license = tag.split(":", 1)[1]
+                break
+    if not license:
+        card_data_attr = getattr(info, "cardData", {})
+        license = card_data_attr.get("license") if isinstance(card_data_attr, dict) else None
     sib_names = [s.rfilename for s in info.siblings or []]
     files_meta = []
     total = 0
@@ -92,8 +105,8 @@ def validate_model_id(model_id: str, token: str | None = None) -> dict:
         "pipeline_tag": info.pipeline_tag,
         "tags": tags,
         "gated": gated,
-        "license": getattr(info, "license", None),
-        "card_data": getattr(info, "card_data", None),
+        "license": license,
+        "card_data": card_data,
         "files": sib_names,
         "total_bytes": total,
         "total_gb": round(total / 1e9, 2),
@@ -167,11 +180,14 @@ def local_check(path: str | Path, files: list[str]) -> dict:
                     continue
                 local_names.add(rel.as_posix())
     missing = [n for n in files if n not in local_names]
+    present_files = [n for n in files if n in local_names]
     return {
         "exists": d.is_dir(),
         "complete": d.is_dir() and not missing,
         "missing": missing,
-        "present": len([n for n in files if n in local_names]),
+        "missing_files": missing,
+        "present_files": present_files,
+        "present": len(present_files),
         "total": len(files),
         "size_gb": round(sum((d / n).stat().st_size for n in files if (d / n).is_file()) / 1e9, 2),
     }
