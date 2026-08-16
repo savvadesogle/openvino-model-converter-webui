@@ -89,6 +89,14 @@ async function validateDownload() {
 }
 function renderDlInfo(res) {
   const i = res.info;
+  if (!i || i.ok === false) {
+    // validation failed (e.g. HF API error / rate limit / model not found)
+    state.dlInfo = null;
+    state.dlNeededBytes = 0;
+    setInfo("dl-info", "Validation failed: " + (i && i.error ? i.error : "unknown error"), "bad");
+    updateDlChecks();
+    return;
+  }
   if (res.kind === "local") {
     setInfo("dl-info",
       `Local model: ${i.name}\nmodel_type: ${i.model_type} · task: ${i.task} · size: ${i.size_gb} GB` +
@@ -111,7 +119,7 @@ function renderDlInfo(res) {
 }
 function updateDlChecks() {
   const i = state.dlInfo;
-  if (!i) return;
+  if (!i) { $("dl-run").disabled = true; return; }
   const needed = (state.dlNeededBytes || 0) * 1.05;
   const free = (state.info.disk_free_gb || 0) * 1e9;
   const okDisk = free >= needed;
@@ -119,7 +127,7 @@ function updateDlChecks() {
   $("dl-disk").appendChild(el("div", okDisk ? "checkline ok" : "checkline bad",
     okDisk ? `Disk: OK (free ${gb(free)} GB ≥ needed ${gb(needed)} GB)` : `Disk: NOT ENOUGH (free ${gb(free)} GB < needed ${gb(needed)} GB)`));
   const dlBtn = $("dl-run");
-  dlBtn.disabled = !(okDisk && (i.kind !== "local" || !i.info.ok));
+  dlBtn.disabled = !(okDisk && i.kind === "hf" && i.info.ok);
 }
 async function runDownload() {
   if (!state.dlInfo || state.dlInfo.kind !== "hf") return;

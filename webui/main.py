@@ -111,14 +111,16 @@ def api_estimate(body: EstimateIn):
 
 @app.post("/api/hf/validate")
 def api_hf_validate(body: HfValidateIn):
-    local = parse_hf_id(body.text) or None
+    import os
     from ov_converter.hf import is_local_path
     lp = is_local_path(body.text)
     if lp is not None:
         return {"kind": "local", "info": __import__("ov_converter.hf", fromlist=["x"]).detect_local(lp)}
+    local = parse_hf_id(body.text)
     if not local:
         raise HTTPException(400, "Not a valid HF model id or local path.")
-    return {"kind": "hf", "info": validate_model_id(local, body.token)}
+    token = body.token or os.environ.get("HF_TOKEN")
+    return {"kind": "hf", "info": validate_model_id(local, token)}
 
 
 @app.post("/api/download")
