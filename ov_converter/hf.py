@@ -4,14 +4,13 @@ from __future__ import annotations
 import fnmatch
 import os
 import re
+import shutil
 from pathlib import Path
 from typing import Callable
 
 import ov_converter.settings as S
 
-HF_URL_RE = re.compile(
-    r"^(?:https?://)?(?:huggingface\.co|hf\.co)?/?(?P<id>[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)"
-)
+HF_ID_RE = re.compile(r"^([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)")
 
 # files that are enough to convert a dense model
 CONVERT_INCLUDE = [
@@ -26,16 +25,21 @@ CONVERT_INCLUDE = [
 
 def parse_hf_id(text: str) -> str | None:
     """Accept full URL / hf URL / bare `org/model`. Returns model id or None."""
-    text = text.strip()
+    text = (text or "").strip().strip("\"'")
     if not text:
         return None
-    m = HF_URL_RE.match(text)
+    text = text.replace("\\", "/")
+    text = re.sub(r"^https?://", "", text).strip("/")
+    if text.startswith("huggingface.co/"):
+        text = text[len("huggingface.co/"):]
+    elif text.startswith("hf.co/"):
+        text = text[len("hf.co/"):]
+    # strip trailing path like /tree/main, /blob/..., /resolve/...
+    text = re.split(r"/(?:tree|blob|resolve|blame|raw)/", text)[0]
+    m = HF_ID_RE.match(text)
     if not m:
         return None
-    mid = m.group("id")
-    # strip trailing path like /tree/main, /blob/..., /resolve/...
-    mid = re.split(r"/(?:tree|blob|resolve|blame|raw)/", mid)[0]
-    return mid
+    return m.group(0)
 
 
 def is_local_path(text: str) -> Path | None:
@@ -58,9 +62,28 @@ def validate_model_id(model_id: str, token: str | None = None) -> dict:
 
     tags = info.tags or []
     gated = bool(getattr(info, "gated", None))
+    sib_names = [s.rfilename for s in info.siblings or []]
+    files_meta = []
     total = 0
     for s in info.siblings or []:
-        total += s.size if getattr(s, "size", 0) else (s.lfs.get("size", 0) if getattr(s, "lfs", None) else 0)
+        size = s.size if getattr(s, "size", 0) else (s.lfs.get("size", 0) if getattr(s, "lfs", None) else 0)
+        total += size
+        files_meta.append({"name": s.rfilename or getattr(s, "path", None), "size": size})
+
+    local_dir = S.model_dir(model_id)
+    local_exists = local_dir.is_dir()
+    local_names: list[str] = []
+    if local_exists:
+        for p in local_dir.rglob("*"):
+            if p.is_file():
+                rel = p.relative_to(local_dir)
+                if any(part.startswith(".") for part in rel.parts[:-1]):
+                    continue
+                local_names.append(rel.as_posix())
+    local_missing = [n for n in sib_names if n not in set(local_names)]
+    local_complete = local_exists and not local_missing
+    local_size = sum((local_dir / f).stat().st_size
+                     for f in local_names if (local_dir / f).is_file())
 
     return {
         "ok": True,
@@ -71,9 +94,16 @@ def validate_model_id(model_id: str, token: str | None = None) -> dict:
         "gated": gated,
         "license": getattr(info, "license", None),
         "card_data": getattr(info, "card_data", None),
-        "files": len(info.siblings or []),
+        "files": sib_names,
         "total_bytes": total,
         "total_gb": round(total / 1e9, 2),
+        "local_dir": str(local_dir),
+        "local_exists": local_exists,
+        "local_files": len(local_names),
+        "local_missing": local_missing,
+        "local_complete": local_complete,
+        "local_size_gb": round(local_size / 1e9, 2),
+        "files_meta": files_meta,
     }
 
 
@@ -159,6 +189,7 @@ def download(model_id: str, dest: str | Path, *, revision: str | None = None,
             emit(f"Downloading {name} ...")
             if progress:
                 progress((i + 1) / len(files) * 100)
+        shutil.rmtree(dest / ".cache", ignore_errors=True)
         emit(f"Downloaded {len(files)} files to {dest}")
         return 0
     except Exception as e:  # noqa: BLE001

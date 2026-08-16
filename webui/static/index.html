@@ -25,8 +25,8 @@
 <section id="panel-download" class="panel active">
 
   <div class="card">
-    <h2>Model <span class="help" title="Paste a Hugging Face link, a bare model id like Qwen/Qwen3.5-0.8B, or a local path. The tool validates it before downloading.">?</span></h2>
-    <p class="hint">Paste <code>https://huggingface.co/Qwen/Qwen3.5-0.8B</code> or <code>Qwen/Qwen3.5-0.8B</code> or a local path.</p>
+    <h2>Model</h2>
+    <p class="desc">Paste a Hugging Face link, a bare model id like <code>Qwen/Qwen3.5-0.8B</code>, or a local path. The tool validates it before downloading.</p>
     <div class="row">
       <input id="dl-text" placeholder="https://huggingface.co/org/model  |  org/model  |  local path">
       <button id="dl-validate" class="secondary">Validate</button>
@@ -35,16 +35,19 @@
   </div>
 
   <div class="card">
-    <h2>Options <span class="help" title="Revision and token are optional. Gated models need an HF token. The include filter fetches only what is needed for conversion.">?</span></h2>
+    <h2>Options</h2>
+    <p class="desc">Revision and token are optional. Gated models need an HF token; the include filter fetches only what is needed for conversion.</p>
     <div class="grid">
       <label>Revision <input id="dl-rev" placeholder="main"></label>
       <label>HF Token <input id="dl-token" type="password" placeholder="hf_... (gated models)"></label>
     </div>
     <label class="check"><input id="dl-include" type="checkbox"> Only files needed for conversion (optional; full download is default)</label>
+    <div id="dl-files" class="filelist"></div>
   </div>
 
   <div class="card">
-    <h2>Destination &amp; checks <span class="help" title="Editable target directory. The download button stays disabled until the disk space check passes.">?</span></h2>
+    <h2>Destination &amp; checks</h2>
+    <p class="desc">Editable target directory. The download button stays disabled until the disk space check passes.</p>
     <label>Destination directory <input id="dl-dest-input" class="mono" placeholder="T:\models\&lt;org&gt;\&lt;model&gt;"></label>
     <div id="dl-disk" class="checkline"></div>
     <div id="dl-ram" class="checkline"></div>
@@ -57,7 +60,8 @@
 <section id="panel-convert" class="panel">
 
   <div class="card">
-    <h2>Model <span class="help" title="Choose a locally scanned model (dense, not GGUF/quantized/OV), or paste a HF link / local path. If it is not downloaded yet, check 'Download first'.">?</span></h2>
+    <h2>Model</h2>
+    <p class="desc">Choose a locally scanned model (dense, not GGUF/quantized/OV), or paste a HF link / local path. If it is not downloaded yet, check &ldquo;Download first&rdquo;.</p>
     <div class="row">
       <select id="cv-model"></select>
       <button id="cv-refresh" class="secondary">Refresh</button>
@@ -68,14 +72,16 @@
   </div>
 
   <div class="card">
-    <h2>Task <span class="help" title="Auto-detected from config.json (vision -> image-text-to-text).">?</span></h2>
+    <h2>Task</h2>
+    <p class="desc">Auto-detected from config.json (vision models map to image-text-to-text).</p>
     <div class="row">
       <input id="cv-task" placeholder="auto">
     </div>
   </div>
 
   <div class="card">
-    <h2>Weight mode <span class="help" title="Modes are loaded dynamically from the installed NNCF version. 'int2-mix' reproduces the AutoRound mixed scheme (experts int2, rest int4) and requires a MoE model.">?</span></h2>
+    <h2>Weight mode</h2>
+    <p class="desc">Modes are loaded dynamically from the installed NNCF version. &ldquo;int2-mix&rdquo; reproduces the AutoRound mixed scheme (experts int2, rest int4) and requires a MoE model.</p>
     <div class="row">
       <select id="cv-mode"></select>
       <button id="cv-selftest" class="secondary">Self-test modes</button>
@@ -84,7 +90,8 @@
   </div>
 
   <div class="card">
-    <h2>Compression <span class="help" title="Group size shares one scale per group; -1 = per-channel. INT8 modes require per-channel. ratio/backup are for single-pass mixed precision.">?</span></h2>
+    <h2>Compression</h2>
+    <p class="desc">Group size shares one scale per group; -1 means per-channel. INT8 modes require per-channel. Ratio/backup apply to single-pass mixed precision.</p>
     <div class="grid">
       <label>Group size <select id="cv-group"></select></label>
       <label>Backup precision <select id="cv-backup">
@@ -116,19 +123,22 @@
   </details>
 
   <div class="card">
-    <h2>Submodels <span class="help" title="For VLMs: compress only the language model + text embeddings and keep vision in fp16 (faster, vision is tiny).">?</span></h2>
+    <h2>Submodels</h2>
+    <p class="desc">For VLMs: compress only the language model + text embeddings and keep vision in fp16 (faster, and vision is tiny).</p>
     <label class="check"><input id="cv-only-text" type="checkbox" checked> Compress only language_model + text_embeddings (keep vision fp16)</label>
   </div>
 
   <div class="card">
-    <h2>Output <span class="help" title="Result path. Name follows the HF OpenVINO convention: <Base>-<mode>-ov. '-ov' is always last.">?</span></h2>
+    <h2>Output</h2>
+    <p class="desc">Result path. The name follows the HF OpenVINO convention &ldquo;&lt;Base&gt;-&lt;mode&gt;-ov&rdquo;, with &ldquo;-ov&rdquo; always last.</p>
     <label>Output directory <input id="cv-outdir" class="mono"></label>
     <label class="check"><input id="cv-delete-int" type="checkbox" checked> Delete intermediate fp16 export after conversion</label>
     <label class="check"><input id="cv-genai" type="checkbox" checked> Run GenAI end-to-end test after conversion</label>
   </div>
 
   <div class="card">
-    <h2>Checks &amp; Run <span class="help" title="Buttons are disabled until disk and virtual-memory checks pass.">?</span></h2>
+    <h2>Checks &amp; Run</h2>
+    <p class="desc">Buttons are disabled until disk and virtual-memory checks pass.</p>
     <div id="cv-disk" class="checkline"></div>
     <div id="cv-ram" class="checkline"></div>
     <div id="cv-errors" class="errors"></div>

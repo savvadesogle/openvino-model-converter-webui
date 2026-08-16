@@ -63,6 +63,9 @@ function bindEvents() {
   });
   $("dl-validate").addEventListener("click", validateDownload);
   $("dl-run").addEventListener("click", runDownload);
+  $("dl-include").addEventListener("change", () => {
+    if (state.dlInfo && state.dlInfo.kind === "hf") showFileList(state.dlInfo.info.files_meta || [], $("dl-include").checked);
+  });
   $("cv-refresh").addEventListener("click", loadModels);
   $("cv-model").addEventListener("change", onModelChange);
   $("cv-mode").addEventListener("change", onModeChange);
@@ -86,12 +89,45 @@ async function validateDownload() {
   const text = $("dl-text").value.trim();
   if (!text) return setInfo("dl-info", "Enter a model link / id / path.", "bad");
   setInfo("dl-info", "Validating…", "ok");
+  if (!state.taskActive) {
+    renderStages("validate");
+    setStage("validate", "running");
+    appendLog("validating " + text + " ...");
+  }
   try {
     const res = await api("/api/hf/validate", { method: "POST", body: JSON.stringify({ text, token: $("dl-token").value || null }) });
     state.dlInfo = res;
     renderDlInfo(res);
     updateDlChecks();
-  } catch (e) { setInfo("dl-info", "Error: " + e.message, "bad"); state.dlInfo = null; }
+    if (!state.taskActive) {
+      if (res.info && res.info.ok) {
+        setStage("validate", "done");
+        appendLog(`validate: ${res.info.id} (${res.info.total_gb} GB, ${res.info.files} files)`);
+        if (res.info.local_complete) appendLog("already downloaded locally: " + res.info.local_dir);
+        if (res.info.local_exists && !res.info.local_complete) appendLog("local copy exists but incomplete (missing: " + res.info.local_missing.length + " files)");
+      } else {
+        setStage("validate", "fail");
+      }
+    }
+  } catch (e) {
+    setInfo("dl-info", "Error: " + e.message, "bad");
+    state.dlInfo = null;
+    if (!state.taskActive) {
+      setStage("validate", "fail");
+      appendLog("validate failed: " + e.message);
+    }
+  }
+}
+function showFileList(filesMeta, includeOnly) {
+  const el = $("dl-files");
+  if (!el) return;
+  const includePatterns = ["*.safetensors", "*.json", "*.txt", "*.jinja", "*.py", "*.md"];
+  const regexes = includePatterns.map((p) => new RegExp("^" + p.replace(/\./g, "\\.").replace(/\*/g, ".*") + "$"));
+  const names = (filesMeta || []).map((f) => f.name);
+  const shown = includeOnly ? names.filter((n) => regexes.some((r) => r.test(n))) : names;
+  if (!shown.length) { el.classList.remove("show"); el.textContent = ""; return; }
+  el.textContent = "will download (" + shown.length + "):\n" + shown.join("\n");
+  el.classList.add("show");
 }
 function renderDlInfo(res) {
   const i = res.info;
@@ -100,6 +136,8 @@ function renderDlInfo(res) {
     state.dlInfo = null;
     state.dlNeededBytes = 0;
     setInfo("dl-info", "Validation failed: " + (i && i.error ? i.error : "unknown error"), "bad");
+    $("dl-files").classList.remove("show");
+    $("dl-files").textContent = "";
     updateDlChecks();
     return;
   }
@@ -121,6 +159,7 @@ function renderDlInfo(res) {
     const dest = `T:\\models\\${org}\\${i.id.split("/")[1]}`;
     $("dl-dest-input").value = dest;
     state.dlNeededBytes = i.total_bytes;
+    showFileList(i.files_meta || [], $("dl-include").checked);
   }
 }
 function updateDlChecks() {
@@ -392,7 +431,7 @@ async function startTask(kind, body, url) {
   };
   es.addEventListener("done", (e) => {
     es.close();
-    try { const d = JSON.parse(e.data); $("task-status").textContent = "done rc=" + d.returncode; }
+    try { const d = JSON.parse(e.data); $("task-status").textContent = d.returncode === 0 ? "completed" : "failed (exit " + d.returncode + ")"; }
     catch (err) { $("task-status").textContent = "done"; }
     $("task-status").className = "chip done";
     resetTaskUi();
