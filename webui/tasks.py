@@ -45,12 +45,18 @@ class Task:
 
     # -- lifecycle ------------------------------------------------------
     def start(self) -> None:
+        # persist the task config WITHOUT the token; pass the real token via env
+        redacted = dict(self.config)
+        if redacted.get("token"):
+            redacted["token"] = None
         cfg_path = PROJECT_DIR / "logs" / f"task_{self.id}.json"
-        cfg_path.write_text(json.dumps(self.config, ensure_ascii=False, indent=2),
+        cfg_path.write_text(json.dumps(redacted, ensure_ascii=False, indent=2),
                             encoding="utf-8")
         env = os.environ.copy()
         env.setdefault(S.HF_HOME_ENV, str(S.CACHE_ROOT))
         env.setdefault(S.HF_HUB_CACHE_ENV, str(S.CACHE_ROOT / "hub"))
+        if self.config.get("token"):
+            env["HF_TOKEN"] = self.config["token"]
         cmd = [os.sys.executable, "-m", "ov_converter.pipeline", str(cfg_path)]
         self._proc = subprocess.Popen(
             cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,

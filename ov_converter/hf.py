@@ -1,6 +1,7 @@
 """HF link parsing, validation and download (`hf download`, xet)."""
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -130,6 +131,8 @@ def download(model_id: str, dest: str | Path, *, revision: str | None = None,
     """Run `hf download` as a subprocess; return exit code. Logs lines via `log`."""
     S.ensure_dirs()
     S.apply_env()
+    # never require the token to travel through the config file: read from env as fallback
+    token = token or os.environ.get("HF_TOKEN") or None
     dest = Path(dest)
     dest.mkdir(parents=True, exist_ok=True)
     cmd = [S.env_script("hf.exe"), "download", model_id, "--local-dir", str(dest)]
@@ -145,11 +148,12 @@ def download(model_id: str, dest: str | Path, *, revision: str | None = None,
         if log:
             log(line)
 
-    env = __import__("os").environ.copy()
+    env = os.environ.copy()
     env.setdefault(S.HF_HOME_ENV, str(S.CACHE_ROOT))
     env.setdefault(S.HF_HUB_CACHE_ENV, str(S.CACHE_ROOT / "hub"))
 
-    emit("Running: " + " ".join(cmd))
+    masked = ["***" if (token and a == token) else a for a in cmd]
+    emit("Running: " + " ".join(masked))
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                             text=True, encoding="utf-8", errors="replace", env=env)
     assert proc.stdout is not None

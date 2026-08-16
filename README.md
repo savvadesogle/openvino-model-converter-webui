@@ -11,8 +11,9 @@ Download Hugging Face models and convert them to OpenVINO (`int2` / `int3` /
   HF-compatible model card + a GenAI end-to-end sanity check.
 
 ```
-source (dense BF16) ──export──> <Base>-fp16-ov ──NNCF compress──> <Base>-int2-ov
-                            (intermediate dense IR)
+source (dense BF16) --export--> <Base>-fp16-ov --NNCF compress--> <Base>-int2-ov
+                          (intermediate dense IR)
+```
 
 ## Layout
 
