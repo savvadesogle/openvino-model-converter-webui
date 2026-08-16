@@ -35,6 +35,7 @@ class DownloadIn(BaseModel):
     token: str | None = None
     include_only: bool = False
     dest: str | None = None
+    files: list[str] | None = None
 
 
 class ConvertIn(BaseModel):
@@ -123,6 +124,17 @@ def api_hf_validate(body: HfValidateIn):
     return {"kind": "hf", "info": validate_model_id(local, token)}
 
 
+class LocalCheckIn(BaseModel):
+    path: str
+    files: list[str] = []
+
+
+@app.post("/api/model/local-check")
+def api_local_check(body: LocalCheckIn):
+    from ov_converter.hf import local_check
+    return local_check(body.path, body.files)
+
+
 @app.post("/api/download")
 def api_download(body: DownloadIn):
     if manager.is_busy():
@@ -141,6 +153,7 @@ def api_download(body: DownloadIn):
         "mode": "none",
         "run_genai_test": False,
         "include_only": body.include_only,
+        "files": body.files,
     })
     return {"task_id": task.id, "dest": str(dest)}
 

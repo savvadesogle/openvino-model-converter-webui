@@ -5,9 +5,10 @@ const $ = (id) => document.getElementById(id);
 const state = {
   info: null, modes: [], sources: [], converted: [],
   dlInfo: null, cvInfo: null, currentMode: null, currentTask: null,
-  taskActive: false,
+  taskActive: false, dlFiles: null, dlSelected: null, dlLocalComplete: null,
 };
 let activeProgressId = null;
+let dlLocalDebounce = null;
 
 /* ---------------------------------------------------------------- helpers */
 function el(tag, cls, text) {
@@ -17,6 +18,34 @@ function el(tag, cls, text) {
   return n;
 }
 function gb(bytes) { return (bytes / 1e9).toFixed(1); }
+function humanSize(bytes) {
+  const b = Number(bytes) || 0;
+  if (b >= 1e9) return (b / 1e9).toFixed(2) + " GB";
+  if (b >= 1e6) return Math.round(b / 1e6) + " MB";
+  if (b >= 1e3) return Math.round(b / 1e3) + " KB";
+  return b + " B";
+}
+function esc(s) {
+  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+function filePurpose(name) {
+  if (name === "config.json") return "Model config";
+  if (name === "model.safetensors.index.json") return "Weights index";
+  if (name.endsWith(".safetensors") && !name.includes(".safetensors.index.json")) return "Model weights";
+  if (name === "tokenizer.json") return "Tokenizer";
+  if (name === "tokenizer_config.json") return "Tokenizer config";
+  if (name === "merges.txt") return "BPE merges";
+  if (name === "vocab.json") return "Vocabulary";
+  if (name === "preprocessor_config.json") return "Image preprocessor";
+  if (name === "processor_config.json") return "Processor";
+  if (name === "video_preprocessor_config.json") return "Video preprocessor";
+  if (name === "chat_template.jinja") return "Chat template";
+  if (name === "generation_config.json") return "Generation config";
+  if (name === "README.md") return "Model card";
+  if (name === "LICENSE") return "License";
+  if (name === ".gitattributes") return "Git metadata";
+  return "Other";
+}
 
 async function api(url, opts) {
   const r = await fetch(url, Object.assign({ headers: { "Content-Type": "application/json" } }, opts));
@@ -63,15 +92,26 @@ function bindEvents() {
   });
   $("dl-validate").addEventListener("click", validateDownload);
   $("dl-run").addEventListener("click", runDownload);
-  $("dl-include").addEventListener("change", () => {
-    if (state.dlInfo && state.dlInfo.kind === "hf") showFileList(state.dlInfo.info.files_meta || [], $("dl-include").checked);
+  const onDestInput = () => {
+    clearTimeout(dlLocalDebounce);
+    dlLocalDebounce = setTimeout(() => { updateDestPreview(); updateLocalStatus(); }, 250);
+  };
+  $("dl-root").addEventListener("input", onDestInput);
+  $("dl-sub").addEventListener("input", onDestInput);
+  $("dl-files").addEventListener("change", () => {
+    state.dlSelected = new Set();
+    document.querySelectorAll("#dl-files input[type=checkbox]:checked").forEach((cb) => state.dlSelected.add(cb.value));
+    updateDlChecks();
   });
+  $("dl-all").addEventListener("click", () => setFilesAll(true));
+  $("dl-none").addEventListener("click", () => setFilesAll(false));
   $("cv-refresh").addEventListener("click", loadModels);
   $("cv-model").addEventListener("change", onModelChange);
   $("cv-mode").addEventListener("change", onModeChange);
   $("cv-selftest").addEventListener("click", runSelfTest);
   $("cv-run").addEventListener("click", runConvert);
   $("task-cancel").addEventListener("click", () => api("/api/task/cancel", { method: "POST" }).catch(() => {}));
+  $("task-cancel").disabled = true;
   $("task-clear").addEventListener("click", () => { $("task-log").innerHTML = ""; $("stages").innerHTML = ""; });
   $("task-collapse").addEventListener("click", () => {
     $("task-panel").classList.toggle("collapsed");
@@ -98,6 +138,7 @@ async function validateDownload() {
     const res = await api("/api/hf/validate", { method: "POST", body: JSON.stringify({ text, token: $("dl-token").value || null }) });
     state.dlInfo = res;
     renderDlInfo(res);
+    await updateLocalStatus();
     updateDlChecks();
     if (!state.taskActive) {
       if (res.info && res.info.ok) {
@@ -112,28 +153,52 @@ async function validateDownload() {
   } catch (e) {
     setInfo("dl-info", "Error: " + e.message, "bad");
     state.dlInfo = null;
+    state.dlFiles = null;
+    state.dlSelected = null;
     if (!state.taskActive) {
       setStage("validate", "fail");
       appendLog("validate failed: " + e.message);
     }
   }
 }
-function showFileList(filesMeta, includeOnly) {
-  const el = $("dl-files");
-  if (!el) return;
-  const includePatterns = ["*.safetensors", "*.json", "*.txt", "*.jinja", "*.py", "*.md"];
-  const regexes = includePatterns.map((p) => new RegExp("^" + p.replace(/\./g, "\\.").replace(/\*/g, ".*") + "$"));
-  const names = (filesMeta || []).map((f) => f.name);
-  const shown = includeOnly ? names.filter((n) => regexes.some((r) => r.test(n))) : names;
-  if (!shown.length) { el.classList.remove("show"); el.textContent = ""; return; }
-  el.textContent = "will download (" + shown.length + "):\n" + shown.join("\n");
-  el.classList.add("show");
+function renderFilePicker(filesMeta) {
+  const box = $("dl-files");
+  if (!box) return;
+  box.innerHTML = "";
+  state.dlSelected = new Set();
+  const files = filesMeta || [];
+  if (!files.length) { box.classList.remove("show"); return; }
+  for (const f of files) {
+    const label = el("label", "check");
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.value = f.name;
+    cb.checked = true;
+    label.appendChild(cb);
+    label.appendChild(document.createTextNode(f.name));
+    label.appendChild(el("span", "fsize", "(" + humanSize(f.size) + ")"));
+    box.appendChild(label);
+    state.dlSelected.add(f.name);
+  }
+  box.classList.add("show");
+}
+function setFilesAll(value) {
+  const box = $("dl-files");
+  if (!box) return;
+  state.dlSelected = new Set();
+  box.querySelectorAll("input[type=checkbox]").forEach((cb) => {
+    cb.checked = value;
+    if (value) state.dlSelected.add(cb.value);
+  });
+  updateDlChecks();
 }
 function renderDlInfo(res) {
   const i = res.info;
   if (!i || i.ok === false) {
     // validation failed (e.g. HF API error / rate limit / model not found)
     state.dlInfo = null;
+    state.dlFiles = null;
+    state.dlSelected = null;
     state.dlNeededBytes = 0;
     setInfo("dl-info", "Validation failed: " + (i && i.error ? i.error : "unknown error"), "bad");
     $("dl-files").classList.remove("show");
@@ -148,19 +213,76 @@ function renderDlInfo(res) {
       (i.is_ov ? "\n⚠ already an OpenVINO model" : "") +
       (i.is_gguf ? "\n⚠ GGUF file (not convertible)" : ""),
       i.ok ? "ok" : "bad");
-    $("dl-dest-input").value = i.path;
+    const parts = String(i.path || "").split(/[\\/]+/).filter(Boolean);
+    $("dl-sub").value = parts[parts.length - 1] || "";
+    $("dl-root").value = parts.slice(0, -1).join("\\") || "";
+    updateDestPreview();
     state.dlNeededBytes = i.size_bytes;
   } else {
-    setInfo("dl-info",
-      `Model: ${i.id} (${i.pipeline_tag || "?"})\nfiles: ${i.files} · total: ${i.total_gb} GB · license: ${i.license || "?"}` +
-      (i.gated ? "\n⚠ GATED — needs an HF token" : ""),
-      i.ok ? "ok" : "bad");
+    const total = i.total_gb != null ? i.total_gb + " GB" : humanSize(i.total_bytes);
+    let html = "Model: " + esc(i.id) + " (" + esc(i.pipeline_tag || "?") + ") · total: " + esc(total) + " · license: " + esc(i.license || "?");
+    if (i.gated) html += "\n⚠ GATED — needs an HF token";
+    const files = i.files_meta || [];
+    if (files.length) {
+      html += "\n<table class=\"mini-table\"><thead><tr><th>File</th><th>Size</th><th>Purpose</th></tr></thead><tbody>";
+      for (const f of files) {
+        html += "<tr><td>" + esc(f.name) + "</td><td>" + esc(humanSize(f.size)) + "</td><td>" + esc(filePurpose(f.name)) + "</td></tr>";
+      }
+      html += "</tbody></table>";
+    }
+    const infoBox = $("dl-info");
+    infoBox.innerHTML = html;
+    infoBox.className = "info show " + (i.ok ? "ok" : "bad");
     const org = i.id.split("/")[0];
-    const dest = `T:\\models\\${org}\\${i.id.split("/")[1]}`;
-    $("dl-dest-input").value = dest;
+    const name = i.id.split("/")[1];
+    $("dl-sub").value = org + "/" + name;
+    const root = $("dl-root").value.trim();
+    if (root === "" || root === "T:\\models") $("dl-root").value = "T:\\models";
+    updateDestPreview();
     state.dlNeededBytes = i.total_bytes;
-    showFileList(i.files_meta || [], $("dl-include").checked);
+    state.dlFiles = i.files || [];
+    renderFilePicker(i.files_meta || []);
   }
+}
+function composeDest() {
+  return $("dl-root").value.trim().replace(/[\\/]+$/, "") + "\\" + $("dl-sub").value.trim().replace(/^[\\/]+/, "");
+}
+function updateDestPreview() {
+  $("dl-dest-preview").textContent = composeDest();
+}
+async function updateLocalStatus() {
+  const box = $("dl-local");
+  if (!state.dlInfo || state.dlInfo.kind !== "hf" || !state.dlFiles) {
+    box.className = "checkline";
+    box.textContent = "";
+    state.dlLocalComplete = null;
+    updateDlChecks();
+    return;
+  }
+  let r;
+  try {
+    r = await api("/api/model/local-check", { method: "POST", body: JSON.stringify({ path: composeDest(), files: state.dlFiles }) });
+  } catch (e) {
+    box.className = "checkline";
+    box.textContent = "";
+    state.dlLocalComplete = false;
+    updateDlChecks();
+    return;
+  }
+  const M = state.dlFiles.length;
+  const missingN = (r.missing && r.missing.length) || 0;
+  if (r.complete) {
+    box.className = "checkline ok";
+    box.textContent = "Already downloaded locally — Download disabled";
+  } else if (r.present > 0) {
+    box.className = "checkline bad";
+    box.textContent = "Local copy exists but incomplete — missing " + missingN + " of " + M + " files";
+  } else {
+    box.className = "checkline ok";
+    box.textContent = "Not present locally — will download " + M + " files";
+  }
+  state.dlLocalComplete = r.complete;
+  updateDlChecks();
 }
 function updateDlChecks() {
   const i = state.dlInfo;
@@ -172,17 +294,18 @@ function updateDlChecks() {
   $("dl-disk").appendChild(el("div", okDisk ? "checkline ok" : "checkline bad",
     okDisk ? `Disk: OK (free ${gb(free)} GB ≥ needed ${gb(needed)} GB)` : `Disk: NOT ENOUGH (free ${gb(free)} GB < needed ${gb(needed)} GB)`));
   const dlBtn = $("dl-run");
-  dlBtn.disabled = !(okDisk && i.kind === "hf" && i.info.ok);
+  const hasSel = state.dlSelected && state.dlSelected.size > 0;
+  dlBtn.disabled = !(okDisk && i.kind === "hf" && i.info.ok && state.dlLocalComplete === false && hasSel);
 }
 async function runDownload() {
   if (!state.dlInfo || state.dlInfo.kind !== "hf") return;
   const id = state.dlInfo.info.id;
   const body = {
     model_id: id,
-    dest: $("dl-dest-input").value.trim() || null,
+    dest: composeDest() || null,
     revision: $("dl-rev").value || null,
     token: $("dl-token").value || null,
-    include_only: $("dl-include").checked,
+    files: state.dlSelected ? [...state.dlSelected] : null,
   };
   await startTask("download", body, "/api/download");
 }
@@ -414,10 +537,11 @@ async function startTask(kind, body, url) {
   $("task-panel").classList.remove("collapsed");
   $("task-collapse").textContent = "▾";
   appendLog("task started: " + id + " (" + kind + ")");
+  appendLog("\n— task " + id + " (" + kind + ") —");
   $("task-status").textContent = "running";
   $("task-status").className = "chip busy";
-  $("task-log").innerHTML = "";
   state.taskActive = true;
+  $("task-cancel").disabled = false;
   ["dl-run", "cv-run"].forEach((b) => { const el = $(b); el.disabled = true; el.classList.add("working"); });
   activeProgressId = kind === "download" ? "dl-progress" : "cv-progress";
   ["dl-progress", "cv-progress"].forEach((id) => {
@@ -441,6 +565,7 @@ async function startTask(kind, body, url) {
 }
 function resetTaskUi() {
   state.taskActive = false;
+  $("task-cancel").disabled = true;
   activeProgressId = null;
   ["dl-run", "cv-run"].forEach((b) => { const el = $(b); el.disabled = false; el.classList.remove("working"); });
   ["dl-progress", "cv-progress"].forEach((id) => {
@@ -486,6 +611,7 @@ function onTaskLine(line) {
 async function pollStatus() {
   try {
     const s = await api("/api/task/status");
+    $("task-cancel").disabled = !(s.busy);
     if (s.task && s.task.kind) {
       $("task-status").textContent = s.busy ? "running" : (s.done ? "finished" : "idle");
       $("task-status").className = "chip " + (s.busy ? "busy" : s.done ? "done" : "");

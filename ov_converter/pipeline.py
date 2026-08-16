@@ -40,6 +40,7 @@ class ConvertConfig:
     keep_fp16_export: bool = False
     download_only: bool = False
     include_only: bool = False
+    files: list[str] | None = None
 
 
 class Emitter:
@@ -128,7 +129,7 @@ def run(cfg: ConvertConfig, emit: Emitter | None = None) -> dict:
         dest.parent.mkdir(parents=True, exist_ok=True)
         try:
             rc = hf.download(mid, dest, revision=cfg.revision, token=cfg.token,
-                             include_only=cfg.include_only,
+                             include_only=cfg.include_only, files=cfg.files,
                              log=lambda t: emit.log(t, "download"),
                              progress=lambda p: emit.emit("PROGRESS", "download", f"{p:.0f}"))
             if rc != 0:

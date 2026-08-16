@@ -156,8 +156,30 @@ def detect_local(model_dir: str | Path) -> dict:
     }
 
 
+def local_check(path: str | Path, files: list[str]) -> dict:
+    d = Path(path)
+    local_names = set()
+    if d.is_dir():
+        for p in d.rglob("*"):
+            if p.is_file():
+                rel = p.relative_to(d)
+                if any(part.startswith(".") for part in rel.parts):
+                    continue
+                local_names.add(rel.as_posix())
+    missing = [n for n in files if n not in local_names]
+    return {
+        "exists": d.is_dir(),
+        "complete": d.is_dir() and not missing,
+        "missing": missing,
+        "present": len([n for n in files if n in local_names]),
+        "total": len(files),
+        "size_gb": round(sum((d / n).stat().st_size for n in files if (d / n).is_file()) / 1e9, 2),
+    }
+
+
 def download(model_id: str, dest: str | Path, *, revision: str | None = None,
              token: str | None = None, include_only: bool = False,
+             files: list[str] | None = None,
              log: Callable[[str], None] | None = None,
              progress: Callable[[float], None] | None = None) -> int:
     """Download a HF repo in-process, file by file; 0 on success, 1 on failure."""
@@ -177,12 +199,14 @@ def download(model_id: str, dest: str | Path, *, revision: str | None = None,
 
     try:
         emit(f"Downloading {model_id} -> {dest}")
-        files = api.list_repo_files(model_id, revision=(revision or "main"))
-        if include_only:
-            files = [n for n in files
-                     if any(fnmatch.fnmatch(n, pat) for pat in CONVERT_INCLUDE)]
+        if files is None:
+            files = api.list_repo_files(model_id, revision=(revision or "main"))
+            if include_only:
+                files = [n for n in files
+                         if any(fnmatch.fnmatch(n, pat) for pat in CONVERT_INCLUDE)]
         if not files:
-            raise RuntimeError(f"no files found in {model_id}")
+            emit("no files selected")
+            return 0
         for i, name in enumerate(files):
             hf_hub_download(repo_id=model_id, filename=name, local_dir=str(dest),
                             revision=revision or None, token=token or None)

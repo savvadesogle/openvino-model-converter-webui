@@ -41,14 +41,19 @@
       <label>Revision <input id="dl-rev" placeholder="main"></label>
       <label>HF Token <input id="dl-token" type="password" placeholder="hf_... (gated models)"></label>
     </div>
-    <label class="check"><input id="dl-include" type="checkbox"> Only files needed for conversion (optional; full download is default)</label>
-    <div id="dl-files" class="filelist"></div>
   </div>
 
   <div class="card">
     <h2>Destination &amp; checks</h2>
     <p class="desc">Editable target directory. The download button stays disabled until the disk space check passes.</p>
-    <label>Destination directory <input id="dl-dest-input" class="mono" placeholder="T:\models\&lt;org&gt;\&lt;model&gt;"></label>
+    <div class="grid">
+      <label>Models root <input id="dl-root" class="mono" value="T:\models"></label>
+      <label>Model folder (org/model) <input id="dl-sub" class="mono" placeholder="org/model"></label>
+    </div>
+    <div class="mono" id="dl-dest-preview">T:\models\&lt;org&gt;\&lt;model&gt;</div>
+    <div class="checkline" id="dl-local"></div>
+    <div class="files-head"><span>Files to download</span><span class="row"><button id="dl-all" class="secondary">All</button><button id="dl-none" class="secondary">None</button></span></div>
+    <div id="dl-files" class="filelist"></div>
     <div id="dl-disk" class="checkline"></div>
     <div id="dl-ram" class="checkline"></div>
     <div class="row"><button id="dl-run" class="primary" disabled>Download</button><div class="progress" id="dl-progress"><div class="fill"></div></div></div>
@@ -160,7 +165,14 @@
   </div>
 </section>
 
-<footer class="mono">Cache: T:\models\.hf-cache &nbsp;·&nbsp; Originals: T:\models\&lt;org&gt;\&lt;model&gt; &nbsp;·&nbsp; Output: T:\models\savvadesogle\&lt;Base&gt;-&lt;mode&gt;-ov</footer>
+<footer>
+  <h3>Storage paths</h3>
+  <div class="mono">
+    <div><b>Cache</b> &mdash; HF / xet download cache &nbsp;:&nbsp; <span>T:\models\.hf-cache</span></div>
+    <div><b>Originals</b> &mdash; downloaded source models &nbsp;:&nbsp; <span>T:\models\&lt;org&gt;\&lt;model&gt;</span></div>
+    <div><b>Output</b> &mdash; converted OpenVINO models &nbsp;:&nbsp; <span>T:\models\savvadesogle\&lt;Base&gt;-&lt;mode&gt;-ov</span></div>
+  </div>
+</footer>
 
 <script src="/static/app.js"></script>
 </body>
