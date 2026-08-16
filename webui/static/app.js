@@ -96,8 +96,8 @@ function renderDlInfo(res) {
       (i.is_ov ? "\n⚠ already an OpenVINO model" : "") +
       (i.is_gguf ? "\n⚠ GGUF file (not convertible)" : ""),
       i.ok ? "ok" : "bad");
-    $("dl-dest").textContent = `dest: ${i.path} (already present)`;
-    state.dlNeededBytes = i.size_gb * 1e9;
+    $("dl-dest-input").value = i.path;
+    state.dlNeededBytes = i.size_bytes;
   } else {
     setInfo("dl-info",
       `Model: ${i.id} (${i.pipeline_tag || "?"})\nfiles: ${i.files} · total: ${i.total_gb} GB · license: ${i.license || "?"}` +
@@ -105,14 +105,14 @@ function renderDlInfo(res) {
       i.ok ? "ok" : "bad");
     const org = i.id.split("/")[0];
     const dest = `T:\\models\\${org}\\${i.id.split("/")[1]}`;
-    $("dl-dest").textContent = `dest: ${dest}`;
+    $("dl-dest-input").value = dest;
     state.dlNeededBytes = i.total_bytes;
   }
 }
 function updateDlChecks() {
   const i = state.dlInfo;
   if (!i) return;
-  const needed = state.dlNeededBytes || 0;
+  const needed = (state.dlNeededBytes || 0) * 1.05;
   const free = (state.info.disk_free_gb || 0) * 1e9;
   const okDisk = free >= needed;
   $("dl-disk").innerHTML = "";
@@ -124,7 +124,13 @@ function updateDlChecks() {
 async function runDownload() {
   if (!state.dlInfo || state.dlInfo.kind !== "hf") return;
   const id = state.dlInfo.info.id;
-  const body = { model_id: id, revision: $("dl-rev").value || null, token: $("dl-token").value || null, include_only: $("dl-include").checked };
+  const body = {
+    model_id: id,
+    dest: $("dl-dest-input").value.trim() || null,
+    revision: $("dl-rev").value || null,
+    token: $("dl-token").value || null,
+    include_only: $("dl-include").checked,
+  };
   await startTask("download", body, "/api/download");
 }
 

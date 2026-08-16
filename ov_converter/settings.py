@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -37,10 +38,54 @@ def model_dir(model_id: str) -> Path:
     return originals_dir(org or "models") / name
 
 
+_PY_QUERY = (
+    "import importlib.util as u, importlib.metadata as m;"
+    "import sys;"
+    "ok = all(u.find_spec(x) is not None for x in ('openvino', 'nncf', 'optimum', 'transformers'));"
+    "ok = ok and m.version('transformers').startswith('5.2');"
+    "sys.exit(0 if ok else 1)"
+)
+
+_resolved_python: str | None = None
+
+
+def _check_python(exe: Path) -> bool:
+    try:
+        r = subprocess.run([str(exe), "-c", _PY_QUERY], capture_output=True, timeout=30)
+        return r.returncode == 0
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def resolve_python() -> str:
+    """Pick a Python that can run the whole pipeline (openvino+nncf+optimum+transformers 5.2).
+
+    Prefer the current interpreter; otherwise scan conda envs under the same root.
+    """
+    global _resolved_python
+    if _resolved_python:
+        return _resolved_python
+    if _check_python(Path(sys.executable)):
+        _resolved_python = sys.executable
+        return _resolved_python
+    root = Path(sys.prefix)
+    while root.name not in ("miniconda3", "conda") and root.parent != root:
+        root = root.parent
+    candidates: list[Path] = [root / "python.exe"]
+    if (root / "envs").is_dir():
+        candidates += sorted((root / "envs").glob("*/python.exe"))
+    for exe in candidates:
+        if exe.exists() and _check_python(exe):
+            _resolved_python = str(exe)
+            return _resolved_python
+    _resolved_python = sys.executable
+    return _resolved_python
+
+
 def env_script(name: str) -> str:
-    """Absolute path to a CLI script inside the current Python env, so subprocesses
+    """Absolute path to a CLI script inside the resolved Python env, so subprocesses
     do not accidentally pick up another conda env from PATH."""
-    base = Path(sys.executable).parent
+    base = Path(resolve_python()).parent
     for cand in (base / name, base / "Scripts" / name):
         if cand.exists():
             return str(cand)

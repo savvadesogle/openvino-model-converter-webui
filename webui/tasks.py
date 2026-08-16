@@ -57,7 +57,7 @@ class Task:
         env.setdefault(S.HF_HUB_CACHE_ENV, str(S.CACHE_ROOT / "hub"))
         if self.config.get("token"):
             env["HF_TOKEN"] = self.config["token"]
-        cmd = [os.sys.executable, "-m", "ov_converter.pipeline", str(cfg_path)]
+        cmd = [S.resolve_python(), "-m", "ov_converter.pipeline", str(cfg_path)]
         self._proc = subprocess.Popen(
             cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             text=True, encoding="utf-8", errors="replace",

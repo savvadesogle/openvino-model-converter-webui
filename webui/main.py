@@ -34,6 +34,7 @@ class DownloadIn(BaseModel):
     revision: str | None = None
     token: str | None = None
     include_only: bool = False
+    dest: str | None = None
 
 
 class ConvertIn(BaseModel):
@@ -126,16 +127,18 @@ def api_download(body: DownloadIn):
         raise HTTPException(409, "Another task is running.")
     if "/" not in body.model_id:
         raise HTTPException(400, "Expected an HF model id like org/model.")
-    dest = S.model_dir(body.model_id)
+    dest = Path(body.dest) if body.dest else S.model_dir(body.model_id)
     task = manager.start("download", {
         "model_id": body.model_id,
         "model_path": None,
+        "dest": str(dest),
         "download": True,
         "download_only": True,
         "revision": body.revision,
         "token": body.token,
         "mode": "none",
         "run_genai_test": False,
+        "include_only": body.include_only,
     })
     return {"task_id": task.id, "dest": str(dest)}
 

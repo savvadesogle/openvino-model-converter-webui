@@ -20,6 +20,7 @@ from ov_converter.modes import list_modes
 class ConvertConfig:
     model_id: str = ""                       # HF id or local path/name
     model_path: str | None = None            # resolved source dir (may be empty)
+    dest: str | None = None                  # download destination dir
     download: bool = True
     revision: str | None = None
     token: str | None = None
@@ -38,6 +39,7 @@ class ConvertConfig:
     prompt: str | None = None
     keep_fp16_export: bool = False
     download_only: bool = False
+    include_only: bool = False
 
 
 class Emitter:
@@ -122,11 +124,12 @@ def run(cfg: ConvertConfig, emit: Emitter | None = None) -> dict:
         emit.start("download")
         from ov_converter import hf
         mid = cfg.model_id
-        dest = S.model_dir(mid)
+        dest = Path(cfg.dest) if cfg.dest else S.model_dir(mid)
         dest.parent.mkdir(parents=True, exist_ok=True)
         try:
             rc = hf.download(mid, dest, revision=cfg.revision, token=cfg.token,
-                             include_only=True, log=lambda t: emit.log(t, "download"))
+                             include_only=cfg.include_only,
+                             log=lambda t: emit.log(t, "download"))
             if rc != 0:
                 raise RuntimeError(f"hf download exited with code {rc}")
             src = dest
