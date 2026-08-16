@@ -6,8 +6,19 @@ import subprocess
 import sys
 from pathlib import Path
 
-PROJECT_DIR = Path(r"T:\tools\ov-converter")
-MODELS_ROOT = Path(r"T:\models")
+PROJECT_DIR = Path(__file__).resolve().parent.parent
+
+
+def _default_models_root() -> Path:
+    env = os.environ.get("OV_MODELS_ROOT")
+    if env:
+        return Path(env)
+    if os.name == "nt":
+        return Path(r"T:\models")
+    return Path.home() / "models"
+
+
+MODELS_ROOT = _default_models_root()
 ORIGINALS_ROOT = MODELS_ROOT                 # <org>/<model>
 OUTPUT_ROOT = MODELS_ROOT / "savvadesogle"   # <Base>-<mode>-ov
 CACHE_ROOT = MODELS_ROOT / ".hf-cache"       # HF_HOME + xet

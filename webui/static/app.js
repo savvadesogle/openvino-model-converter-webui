@@ -226,7 +226,7 @@ function bindEvents() {
   $("task-collapse").addEventListener("click", () => {
     $("task-panel").classList.toggle("collapsed");
     const collapsed = $("task-panel").classList.contains("collapsed");
-    $("task-collapse").textContent = collapsed ? "▾" : "▴";
+    $("task-collapse").textContent = collapsed ? "▴" : "▾";
     $("task-collapse").title = collapsed ? "Expand" : "Collapse";
   });
 }
@@ -240,7 +240,7 @@ function setInfo(container, text, kind) {
 function ensureTaskPanel() {
   $("task-panel").classList.remove("collapsed");
   const btn = $("task-collapse");
-  btn.textContent = "▴";
+  btn.textContent = "▾";
   btn.title = "Collapse";
   renderStages("validate");
   const chip = $("task-status");
@@ -377,7 +377,7 @@ function renderDlInfo(res) {
     infoBox.innerHTML = html;
     infoBox.className = "info show " + (i.ok ? "ok" : "bad");
     $("dl-tags").innerHTML =
-      "<span class=\"tag tag-link\" title=\"Click to fill and validate\" data-fill=\"" + esc(i.id) + "\">" + esc(i.id) + "</span> " +
+      "<span class=\"tag\">" + esc(i.id) + "</span> " +
       "<span class=\"tag\">" + esc(i.pipeline_tag || "?") + "</span> " +
       "<span class=\"tag\">" + esc(i.total_gb) + " GB</span> " +
       "<span class=\"tag\">" + esc(i.license || "?") + "</span> " +
@@ -387,17 +387,18 @@ function renderDlInfo(res) {
     const name = i.id.split("/")[1];
     $("dl-sub").value = org + "/" + name;
     const root = $("dl-root").value.trim();
-    if (root === "" || root === "T:\\models") $("dl-root").value = "T:\\models";
+    if (!root || root === "T:\\models" || root === "T:/models") $("dl-root").value = (state.info && state.info.paths.originals) || "T:\\models";
     updateDirLink();
     state.dlNeededBytes = i.total_bytes;
     state.dlFiles = i.files || [];
     renderFilePicker(i.files_meta || []);
   }
 }
+function osSep() { return ((navigator.platform || "") + " " + (navigator.userAgent || "")).indexOf("Win") !== -1 ? "\\" : "/"; }
 function composeDest() {
   const root = $("dl-root").value.trim().replace(/[\\/]+$/, "");
-  const sub = $("dl-sub").value.trim().replace(/^[\\/]+/, "").replace(/\//g, "\\");
-  return root + "\\" + sub;
+  const sub = $("dl-sub").value.trim().replace(/^[\\/]+/, "").split(/[\\/]+/).join(osSep());
+  return root + osSep() + sub;
 }
 function updateDirLink() {
   const link = $("dl-dir-link");
@@ -419,6 +420,7 @@ async function updateLocalStatus() {
     state.dlLocalComplete = null;
     state.dlLocalExists = false;
     $("dl-dest-card").classList.toggle("done", false);
+    $("dl-dest-card").classList.toggle("pending", false);
     $("dl-hash-card").hidden = true;
     updateDirLink();
     updateDlChecks();
@@ -435,6 +437,7 @@ async function updateLocalStatus() {
     state.dlLocalComplete = false;
     state.dlLocalExists = false;
     $("dl-dest-card").classList.toggle("done", false);
+    $("dl-dest-card").classList.toggle("pending", false);
     $("dl-hash-card").hidden = true;
     updateDirLink();
     updateDlChecks();
@@ -450,13 +453,16 @@ async function updateLocalStatus() {
     box.className = "banner show bad";
     box.textContent = "Local copy exists but incomplete — missing " + missingN + " of " + M + " files: " + ((r.missing || []).join(", "));
   } else {
-    box.className = "banner show bad";
+    box.className = "banner show warn";
     box.textContent = "Not present locally — will download " + M + " files";
   }
   state.dlLocalComplete = r.complete;
   state.dlLocalExists = r.exists === true;
+  const chk = $("dl-check");
+  if (chk) chk.hidden = !(state.dlLocalComplete === true);
   updateDirLink();
   $("dl-dest-card").classList.toggle("done", state.dlLocalComplete === true);
+  $("dl-dest-card").classList.toggle("pending", state.dlInfo && state.dlInfo.kind === "hf" && state.dlLocalComplete !== true);
   $("dl-hash-card").hidden = !(state.dlInfo && state.dlInfo.kind === "hf" && r.present > 0);
   renderFilePicker(state.dlInfo.info.files_meta || [], r.present_files || []);
   updateDlChecks();
@@ -846,7 +852,7 @@ async function startTask(kind, body, url) {
   state.currentTask = id;
   renderStages(kind);
   $("task-panel").classList.remove("collapsed");
-  $("task-collapse").textContent = "▴";
+  $("task-collapse").textContent = "▾";
   $("task-collapse").title = "Collapse";
   appendLog("task started: " + id + " (" + kind + ")");
   appendLog("\n— task " + id + " (" + kind + ") —");

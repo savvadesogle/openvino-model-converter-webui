@@ -90,6 +90,8 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .secondary:not(:disabled):hover { filter: brightness(.97); }
 .danger { background: var(--peach); color: #a05a3a; }
 
+.dl-check { color: var(--ok); font-weight: 700; font-size: 16px; line-height: 1; }
+
 .progress { height: 8px; width: 240px; background: var(--line); border-radius: 0; overflow: hidden; position: relative; }
 .progress .fill { height: 100%; width: 0%; background: var(--mint-2); transition: width .3s; }
 .progress.indeterminate .fill { width: 40%; animation: prog-slide 1.1s infinite linear; }
@@ -144,6 +146,8 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .banner.show { display: block; }
 .banner.ok { background: #eff7f2; border-color: var(--mint-2); color: #2f6b4d; }
 .banner.bad { background: #fbefef; border-color: var(--err); color: #a05a3a; }
+.banner.warn { background: #fdf6e3; border-color: #e6c76a; color: #8a6d1a; }
+.card.pending { background: #fdf9ec; border-color: #e6c76a; }
 .banner.neutral { background: var(--bg); border-color: var(--line); color: var(--muted); }
 
 .tags { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; align-items: center; }

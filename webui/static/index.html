@@ -59,7 +59,7 @@
     <p class="desc">Editable target directory. The download button stays disabled until the disk space check passes.</p>
     <div class="banner" id="dl-local"></div>
     <div class="grid">
-      <label>Models root <input id="dl-root" class="mono" value="T:\models"></label>
+      <label>Models root <input id="dl-root" class="mono" placeholder="Models root"></label>
       <label>Model folder (org/model) <input id="dl-sub" class="mono" placeholder="org/model"></label>
     </div>
     <div class="dirline">Open directory: <a id="dl-dir-link" class="dir-link" title="Open in Explorer"></a></div>
@@ -69,7 +69,7 @@
     </div>
     <div id="dl-files" class="filelist"></div>
     <div id="dl-disk" class="checkline"></div>
-    <div class="row"><button id="dl-run" class="primary" disabled>Download</button><span class="spinner" id="dl-spinner" hidden></span><div class="progress" id="dl-progress"><div class="fill"></div></div><button id="dl-cancel" class="danger" hidden>Cancel</button></div>
+    <div class="row"><button id="dl-run" class="primary" disabled>Download</button><span class="dl-check" id="dl-check" hidden>✓</span><span class="spinner" id="dl-spinner" hidden></span><div class="progress" id="dl-progress"><div class="fill"></div></div><button id="dl-cancel" class="danger" hidden>Cancel</button></div>
   </div>
 
   <div class="card" id="dl-hash-card" hidden>
@@ -176,7 +176,7 @@
 
 <!-- ============================================================ TASK -->
 <section id="task-panel" class="card task">
-  <div class="task-head"><h2>Task <span id="task-status" class="chip"></span></h2><button id="task-collapse" class="secondary" title="Collapse">▴</button></div>
+  <div class="task-head"><h2>Task <span id="task-status" class="chip"></span></h2><button id="task-collapse" class="secondary" title="Collapse">▾</button></div>
   <div id="stages" class="stages"></div>
   <pre id="task-log"></pre>
   <div class="row">
