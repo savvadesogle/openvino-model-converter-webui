@@ -147,12 +147,12 @@ def download(model_id: str, dest: str | Path, *, revision: str | None = None,
 
     try:
         emit(f"Downloading {model_id} -> {dest}")
-        files = [f.rfilename for f in api.list_repo_tree(
-            model_id, revision=(revision or "main"), recursive=True, expand=True)
-            if f.type == "file"]
+        files = api.list_repo_files(model_id, revision=(revision or "main"))
         if include_only:
             files = [n for n in files
                      if any(fnmatch.fnmatch(n, pat) for pat in CONVERT_INCLUDE)]
+        if not files:
+            raise RuntimeError(f"no files found in {model_id}")
         for i, name in enumerate(files):
             hf_hub_download(repo_id=model_id, filename=name, local_dir=str(dest),
                             revision=revision or None, token=token or None)
