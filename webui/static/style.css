@@ -53,6 +53,7 @@ main { display: flex; flex-direction: column; gap: 14px; max-width: 1000px; }
   border-radius: var(--radius); padding: 16px 18px;
 }
 .card h2 { margin: 0 0 8px; font-size: 14px; font-weight: 700; display: flex; align-items: center; gap: 6px; text-transform: uppercase; letter-spacing: .4px; }
+.card.done { background: #f2fbf6; border-color: var(--mint-2); }
 .desc, .hint { margin: 0 0 10px; color: var(--muted); font-size: 12.5px; }
 
 .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
@@ -74,8 +75,8 @@ button {
   font-weight: 600; font-size: 13px; white-space: nowrap;
 }
 button:disabled { opacity: .45; cursor: not-allowed; }
-.primary { background: var(--mint-2); color: #1e4a36; }
-.primary:not(:disabled):hover { filter: brightness(.96); }
+.primary { background: #8b7fd6; color: #fff; }
+.primary:not(:disabled):hover { background: #7a6fc0; }
 .secondary { background: var(--lav); color: #5a4f86; }
 .secondary:not(:disabled):hover { filter: brightness(.97); }
 .danger { background: var(--peach); color: #a05a3a; }
@@ -116,7 +117,7 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .checkline.bad { color: var(--err); }
 .errors { color: var(--err); font-size: 12.5px; margin-top: 8px; }
 
-.dir-link { color: var(--mint-2); text-decoration: underline dotted; text-underline-offset: 3px; cursor: pointer; }
+.dir-link { color: #8b7fd6; text-decoration: underline dotted; text-underline-offset: 3px; cursor: pointer; }
 .dir-link:hover { text-decoration: underline; }
 
 .banner { margin-bottom: 10px; padding: 8px 12px; border-radius: 8px; font-size: 12.5px; border: 1px solid; display: none; }

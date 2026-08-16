@@ -55,6 +55,10 @@ class Task:
         env = os.environ.copy()
         env.setdefault(S.HF_HOME_ENV, str(S.CACHE_ROOT))
         env.setdefault(S.HF_HUB_CACHE_ENV, str(S.CACHE_ROOT / "hub"))
+        if self.config.get("hf_home"):
+            env[S.HF_HOME_ENV] = str(self.config["hf_home"])
+        if self.config.get("hf_hub_cache"):
+            env[S.HF_HUB_CACHE_ENV] = str(self.config["hf_hub_cache"])
         if self.config.get("token"):
             env["HF_TOKEN"] = self.config["token"]
         cmd = [S.resolve_python(), "-m", "ov_converter.pipeline", str(cfg_path)]

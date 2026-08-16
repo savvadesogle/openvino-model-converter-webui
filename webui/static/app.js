@@ -9,6 +9,7 @@ const state = {
 };
 let activeProgressId = null;
 let dlLocalDebounce = null;
+let hfEnvDebounce = null;
 
 /* ---------------------------------------------------------------- helpers */
 function el(tag, cls, text) {
@@ -65,6 +66,9 @@ async function loadInfo() {
   state.info = await api("/api/info");
   $("paths").textContent =
     `cache: ${state.info.paths.cache}   ·   originals: ${state.info.paths.originals}   ·   output: ${state.info.paths.output}`;
+  $("hf-home").value = state.info.paths.cache;
+  $("hf-hub-cache").value = state.info.paths.cache + "\\hub";
+  validateHfEnv();
   const chips = $("versions");
   chips.innerHTML = "";
   for (const [k, v] of Object.entries(state.info.versions)) {
@@ -81,6 +85,32 @@ async function loadModels() {
   state.converted = d.converted;
   renderModelSelect();
 }
+async function validateHfEnv() {
+  const res = $("hf-env-res");
+  if (!res) return;
+  const paths = { "HF_HOME": $("hf-home").value.trim(), "HF_HUB_CACHE": $("hf-hub-cache").value.trim() };
+  const bad = Object.entries(paths).find(([, v]) => v === "" || !/^[A-Za-z]:[\\/]/.test(v));
+  if (bad) {
+    res.className = "banner show bad";
+    res.textContent = "Invalid path: " + (bad[1] || "(" + bad[0] + " is empty)");
+    return;
+  }
+  try {
+    const results = await Promise.all(Object.values(paths).map((p) => api("/api/disk?path=" + encodeURIComponent(p))));
+    const free = Math.min(...results.map((r) => Number(r.free_gb) || 0));
+    if (free < 10) {
+      res.className = "banner show bad";
+      res.textContent = "Insufficient disk (" + free.toFixed(1) + " GB free on cache drive)";
+      return;
+    }
+    const drive = (Object.values(paths)[0].match(/^([A-Za-z]):/) || [])[1] || "?";
+    res.className = "banner show ok";
+    res.textContent = "Cache paths OK — drive " + drive + ": has " + free.toFixed(1) + " GB free";
+  } catch (e) {
+    res.className = "banner show bad";
+    res.textContent = "Error checking cache disk: " + e.message;
+  }
+}
 
 /* ---------------------------------------------------------------- tabs */
 function bindEvents() {
@@ -94,7 +124,7 @@ function bindEvents() {
   $("dl-run").addEventListener("click", runDownload);
   const onDestInput = () => {
     clearTimeout(dlLocalDebounce);
-    dlLocalDebounce = setTimeout(() => { updateDestPreview(); updateLocalStatus(); }, 250);
+    dlLocalDebounce = setTimeout(() => { updateDirLink(); updateLocalStatus(); }, 250);
   };
   $("dl-root").addEventListener("input", onDestInput);
   $("dl-sub").addEventListener("input", onDestInput);
@@ -105,7 +135,12 @@ function bindEvents() {
   });
   $("dl-all").addEventListener("click", () => setFilesAll(true));
   $("dl-none").addEventListener("click", () => setFilesAll(false));
-  $("dl-clear").addEventListener("click", () => setFilesAll(false));
+  const onHfEnvInput = () => {
+    clearTimeout(hfEnvDebounce);
+    hfEnvDebounce = setTimeout(validateHfEnv, 300);
+  };
+  $("hf-home").addEventListener("input", onHfEnvInput);
+  $("hf-hub-cache").addEventListener("input", onHfEnvInput);
   $("dl-dir-link").addEventListener("click", (e) => {
     e.preventDefault();
     api("/api/open-dir", { method: "POST", body: JSON.stringify({ path: composeDest() }) })
@@ -187,10 +222,11 @@ async function validateDownload() {
   log.scrollTop = log.scrollHeight;
   $("task-panel").scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
-function setSelectBtns(disabled) {
+function setSelectBtns() {
+  const hasSel = state.dlSelected && state.dlSelected.size > 0;
+  const disabled = state.dlLocalComplete === true || !hasSel;
   $("dl-all").disabled = disabled;
   $("dl-none").disabled = disabled;
-  $("dl-clear").disabled = disabled;
 }
 function renderFilePicker(filesMeta, presentFiles) {
   const box = $("dl-files");
@@ -198,7 +234,7 @@ function renderFilePicker(filesMeta, presentFiles) {
   box.innerHTML = "";
   state.dlSelected = new Set();
   const files = filesMeta || [];
-  if (!files.length) { box.classList.remove("show"); setSelectBtns(true); return; }
+  if (!files.length) { box.classList.remove("show"); setSelectBtns(); return; }
   const present = new Set(presentFiles || []);
   for (const f of files) {
     const isPresent = present.has(f.name);
@@ -215,7 +251,7 @@ function renderFilePicker(filesMeta, presentFiles) {
     if (cb.checked && !cb.disabled) state.dlSelected.add(f.name);
   }
   box.classList.add("show");
-  setSelectBtns(false);
+  setSelectBtns();
 }
 function setFilesAll(value) {
   const box = $("dl-files");
@@ -239,7 +275,7 @@ function renderDlInfo(res) {
     setInfo("dl-info", "Validation failed: " + (i && i.error ? i.error : "unknown error"), "bad");
     $("dl-files").classList.remove("show");
     $("dl-files").textContent = "";
-    setSelectBtns(true);
+    setSelectBtns();
     $("dl-tags").innerHTML = "";
     $("dl-tags").hidden = true;
     $("dl-hash-card").hidden = true;
@@ -259,7 +295,7 @@ function renderDlInfo(res) {
     $("dl-root").value = parts.slice(0, -1).join("\\") || "";
     $("dl-tags").innerHTML = "";
     $("dl-tags").hidden = true;
-    updateDestPreview();
+    updateDirLink();
     state.dlNeededBytes = i.size_bytes;
   } else {
     const files = i.files_meta || [];
@@ -288,7 +324,7 @@ function renderDlInfo(res) {
     $("dl-sub").value = org + "/" + name;
     const root = $("dl-root").value.trim();
     if (root === "" || root === "T:\\models") $("dl-root").value = "T:\\models";
-    updateDestPreview();
+    updateDirLink();
     state.dlNeededBytes = i.total_bytes;
     state.dlFiles = i.files || [];
     renderFilePicker(i.files_meta || []);
@@ -299,16 +335,12 @@ function composeDest() {
   const sub = $("dl-sub").value.trim().replace(/^[\\/]+/, "").replace(/\//g, "\\");
   return root + "\\" + sub;
 }
-function updateDestPreview() {
-  $("dl-dest-preview").textContent = composeDest();
-  updateDirLink();
-}
 function updateDirLink() {
   const link = $("dl-dir-link");
   if (!link) return;
-  const dest = composeDest();
-  link.textContent = dest;
-  link.hidden = !(state.dlInfo && state.dlInfo.kind === "hf" && dest);
+  const show = state.dlInfo && state.dlInfo.kind === "hf" && state.dlLocalExists === true;
+  link.hidden = !show;
+  link.textContent = show ? composeDest() : "";
 }
 async function updateLocalStatus() {
   const box = $("dl-local");
@@ -316,6 +348,8 @@ async function updateLocalStatus() {
     box.className = "banner";
     box.textContent = "";
     state.dlLocalComplete = null;
+    state.dlLocalExists = false;
+    $("dl-dest-card").classList.toggle("done", false);
     $("dl-hash-card").hidden = true;
     updateDlChecks();
     return;
@@ -327,6 +361,8 @@ async function updateLocalStatus() {
     box.className = "banner";
     box.textContent = "";
     state.dlLocalComplete = false;
+    state.dlLocalExists = false;
+    $("dl-dest-card").classList.toggle("done", false);
     $("dl-hash-card").hidden = true;
     updateDlChecks();
     return;
@@ -340,23 +376,26 @@ async function updateLocalStatus() {
     box.className = "banner show bad";
     box.textContent = "Local copy exists but incomplete — missing " + missingN + " of " + M + " files: " + ((r.missing || []).join(", "));
   } else {
-    box.className = "banner show neutral";
+    box.className = "banner show bad";
     box.textContent = "Not present locally — will download " + M + " files";
   }
   state.dlLocalComplete = r.complete;
+  state.dlLocalExists = r.exists === true;
+  $("dl-dest-card").classList.toggle("done", state.dlLocalComplete === true);
   $("dl-hash-card").hidden = !(state.dlInfo && state.dlInfo.kind === "hf" && r.present > 0);
   renderFilePicker(state.dlInfo.info.files_meta || [], r.present_files || []);
   updateDlChecks();
 }
 function updateDlChecks() {
   const i = state.dlInfo;
+  setSelectBtns();
   $("dl-verify").disabled = !$("dl-hash-card") || $("dl-hash-card").hidden;
   if (!i) { $("dl-run").disabled = true; return; }
   const needed = (state.dlNeededBytes || 0) * 1.05;
   const free = (state.info.disk_free_gb || 0) * 1e9;
   const okDisk = free >= needed;
   $("dl-disk").innerHTML = "";
-  $("dl-disk").appendChild(el("div", okDisk ? "checkline ok" : "checkline bad",
+  $("dl-disk").appendChild(el("div", okDisk ? "banner show ok" : "banner show bad",
     okDisk ? `Disk: OK (free ${gb(free)} GB ≥ needed ${gb(needed)} GB)` : `Disk: NOT ENOUGH (free ${gb(free)} GB < needed ${gb(needed)} GB)`));
   const dlBtn = $("dl-run");
   const hasSel = state.dlSelected && state.dlSelected.size > 0;
@@ -370,6 +409,8 @@ async function runDownload() {
     dest: composeDest() || null,
     revision: $("dl-rev").value || null,
     token: $("dl-token").value || null,
+    hf_home: $("hf-home").value.trim() || null,
+    hf_hub_cache: $("hf-hub-cache").value.trim() || null,
     files: state.dlSelected ? [...state.dlSelected] : null,
   };
   await startTask("download", body, "/api/download");
@@ -521,7 +562,7 @@ function updateCvChecks() {
   const okDisk = free >= needs;
   const line = $("cv-disk");
   line.innerHTML = "";
-  line.appendChild(el("div", okDisk ? "checkline ok" : "checkline bad",
+  line.appendChild(el("div", okDisk ? "banner show ok" : "banner show bad",
     okDisk ? `Disk: OK (free ${gb(free)} GB ≥ needed ~${gb(needs)} GB)` : `Disk: NOT ENOUGH (free ${gb(free)} GB < needed ~${gb(needs)} GB)`));
 
   const ramNeeded = params * 4 * 1.2;
@@ -531,11 +572,11 @@ function updateCvChecks() {
   if (vm) {
     const avail = vm.avail_virtual_gb * 1e9;
     const okRam = avail >= ramNeeded;
-    lineR.appendChild(el("div", okRam ? "checkline ok" : "checkline bad",
+    lineR.appendChild(el("div", okRam ? "banner show ok" : "banner show bad",
       okRam ? `Virtual memory: OK (avail ${vm.avail_virtual_gb} GB ≥ peak ~${gb(ramNeeded)} GB)` :
         `Virtual memory: NOT ENOUGH (avail ${vm.avail_virtual_gb} GB < peak ~${gb(ramNeeded)} GB)`));
   } else {
-    lineR.appendChild(el("div", "checkline ok", "Virtual memory: non-Windows, check skipped"));
+    lineR.appendChild(el("div", "banner show ok", "Virtual memory: non-Windows, check skipped"));
   }
 
   const errors = [];
@@ -558,6 +599,8 @@ async function runConvert() {
     model_id: currentBase(),
     model_path: $("cv-model").value && !$("cv-model").value.startsWith("ov:") ? $("cv-model").value : null,
     download: $("cv-download-first").checked,
+    hf_home: $("hf-home").value.trim() || null,
+    hf_hub_cache: $("hf-hub-cache").value.trim() || null,
     task: $("cv-task").value.trim(),
     mode: state.currentMode ? state.currentMode.id : "int4_sym",
     group_size: Number($("cv-group").value),

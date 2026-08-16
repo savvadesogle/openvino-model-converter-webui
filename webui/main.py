@@ -37,6 +37,8 @@ class DownloadIn(BaseModel):
     include_only: bool = False
     dest: str | None = None
     files: list[str] | None = None
+    hf_home: str | None = None
+    hf_hub_cache: str | None = None
 
 
 class ConvertIn(BaseModel):
@@ -58,6 +60,8 @@ class ConvertIn(BaseModel):
     run_genai_test: bool = True
     prompt: str | None = None
     download_only: bool = False
+    hf_home: str | None = None
+    hf_hub_cache: str | None = None
 
 
 class OpenDirIn(BaseModel):
@@ -163,6 +167,18 @@ def api_verify_hash(body: VerifyHashIn):
     return verify_hashes(body.path, body.files)
 
 
+@app.get("/api/disk")
+def api_disk(path: str = ""):
+    import shutil
+    if not path:
+        return {"ok": False, "error": "path is required"}
+    try:
+        t, u, f = shutil.disk_usage(path)
+        return {"ok": True, "path": path, "free_gb": round(f/1e9, 1), "total_gb": round(t/1e9, 1)}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
 @app.post("/api/download")
 def api_download(body: DownloadIn):
     if manager.is_busy():
@@ -182,6 +198,8 @@ def api_download(body: DownloadIn):
         "run_genai_test": False,
         "include_only": body.include_only,
         "files": body.files,
+        "hf_home": body.hf_home,
+        "hf_hub_cache": body.hf_hub_cache,
     })
     return {"task_id": task.id, "dest": str(dest)}
 

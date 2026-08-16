@@ -41,6 +41,8 @@ class ConvertConfig:
     download_only: bool = False
     include_only: bool = False
     files: list[str] | None = None
+    hf_home: str | None = None
+    hf_hub_cache: str | None = None
 
 
 class Emitter:
