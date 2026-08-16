@@ -105,6 +105,12 @@ function bindEvents() {
   });
   $("dl-all").addEventListener("click", () => setFilesAll(true));
   $("dl-none").addEventListener("click", () => setFilesAll(false));
+  $("dl-open").addEventListener("click", () => {
+    api("/api/open-dir", { method: "POST", body: JSON.stringify({ path: composeDest() }) })
+      .then((r) => { if (!r.ok) appendLog("open folder failed: " + (r.error || "?")); })
+      .catch((e) => appendLog("open folder error: " + e.message));
+  });
+  $("dl-verify").addEventListener("click", verifyHashes);
   $("cv-refresh").addEventListener("click", loadModels);
   $("cv-model").addEventListener("change", onModelChange);
   $("cv-mode").addEventListener("change", onModeChange);
@@ -312,6 +318,9 @@ async function updateLocalStatus() {
 }
 function updateDlChecks() {
   const i = state.dlInfo;
+  const canHash = !!(state.dlInfo && state.dlInfo.kind === "hf" && composeDest());
+  $("dl-open").disabled = !canHash;
+  $("dl-verify").disabled = !canHash;
   if (!i) { $("dl-run").disabled = true; return; }
   const needed = (state.dlNeededBytes || 0) * 1.05;
   const free = (state.info.disk_free_gb || 0) * 1e9;
@@ -334,6 +343,31 @@ async function runDownload() {
     files: state.dlSelected ? [...state.dlSelected] : null,
   };
   await startTask("download", body, "/api/download");
+}
+async function verifyHashes() {
+  const box = $("dl-hashres");
+  const filesMeta = (state.dlInfo && state.dlInfo.info.files_meta) || [];
+  const total = filesMeta.length;
+  try {
+    const r = await api("/api/model/verify-hash", { method: "POST", body: JSON.stringify({ path: composeDest(), files: filesMeta }) });
+    if (r.corrupt_count === 0) {
+      const msg = "Hashes verified: " + r.checked + " files OK";
+      box.className = "checkline ok";
+      box.textContent = msg;
+      appendLog(msg);
+    } else {
+      const bad = (r.results || []).filter((x) => x.ok === false || x.present === false);
+      const names = bad.map((x) => esc(x.name));
+      const msg = "Corrupt/missing: " + bad.map((x) => x.name).join(", ") + " (" + r.checked + " of " + total + " checked)";
+      box.className = "checkline bad";
+      box.innerHTML = "Corrupt/missing: " + names.join(", ") + " (" + r.checked + " of " + total + " checked)";
+      appendLog(msg);
+    }
+  } catch (e) {
+    box.className = "checkline bad";
+    box.textContent = "Verify hashes error: " + e.message;
+    appendLog("verify hashes error: " + e.message);
+  }
 }
 
 /* ---------------------------------------------------------------- Convert tab */

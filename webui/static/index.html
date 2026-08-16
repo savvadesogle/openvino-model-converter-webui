@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>OpenVINO Model Converter</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%238ccbb0'/%3E%3Ctext x='16' y='21' font-size='14' text-anchor='middle' fill='%231e4a36' font-family='sans-serif' font-weight='700'%3EOV%3C/text%3E%3C/svg%3E">
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
@@ -50,9 +51,10 @@
       <label>Models root <input id="dl-root" class="mono" value="T:\models"></label>
       <label>Model folder (org/model) <input id="dl-sub" class="mono" placeholder="org/model"></label>
     </div>
-    <div class="mono" id="dl-dest-preview">T:\models\&lt;org&gt;\&lt;model&gt;</div>
+    <div class="row"><div class="mono" id="dl-dest-preview">T:\models\&lt;org&gt;\&lt;model&gt;</div><button id="dl-open" class="secondary" disabled title="Open the download folder in Explorer">Open folder</button></div>
     <div class="checkline" id="dl-local"></div>
-    <div class="files-head"><span>Files to download</span><span class="row"><button id="dl-all" class="secondary">All</button><button id="dl-none" class="secondary">None</button></span></div>
+    <div class="files-head"><span>Files to download</span><span class="row"><button id="dl-verify" class="secondary" disabled>Verify hashes</button><button id="dl-all" class="secondary">All</button><button id="dl-none" class="secondary">None</button></span></div>
+    <div id="dl-hashres" class="checkline"></div>
     <div id="dl-files" class="filelist"></div>
     <div id="dl-disk" class="checkline"></div>
     <div id="dl-ram" class="checkline"></div>

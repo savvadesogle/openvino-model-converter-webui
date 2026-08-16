@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
@@ -57,6 +58,15 @@ class ConvertIn(BaseModel):
     run_genai_test: bool = True
     prompt: str | None = None
     download_only: bool = False
+
+
+class OpenDirIn(BaseModel):
+    path: str
+
+
+class VerifyHashIn(BaseModel):
+    path: str
+    files: list[dict] = []
 
 
 @app.get("/")
@@ -133,6 +143,24 @@ class LocalCheckIn(BaseModel):
 def api_local_check(body: LocalCheckIn):
     from ov_converter.hf import local_check
     return local_check(body.path, body.files)
+
+
+@app.post("/api/open-dir")
+def api_open_dir(body: OpenDirIn):
+    path = (body.path or "").strip()
+    if not path or not os.path.isdir(path):
+        return {"ok": False, "error": "not a directory"}
+    try:
+        os.startfile(path)
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "error": str(e)}
+    return {"ok": True}
+
+
+@app.post("/api/model/verify-hash")
+def api_verify_hash(body: VerifyHashIn):
+    from ov_converter.hf import verify_hashes
+    return verify_hashes(body.path, body.files)
 
 
 @app.post("/api/download")

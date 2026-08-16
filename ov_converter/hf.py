@@ -81,7 +81,10 @@ def validate_model_id(model_id: str, token: str | None = None) -> dict:
     for s in info.siblings or []:
         size = s.size if getattr(s, "size", 0) else (s.lfs.get("size", 0) if getattr(s, "lfs", None) else 0)
         total += size
-        files_meta.append({"name": s.rfilename or getattr(s, "path", None), "size": size})
+        sha = (s.lfs or {}).get("sha256") if isinstance(s.lfs, dict) else \
+            getattr(s, "sha256", None) or (getattr(s, "lfs", None) or {}).get("sha256")
+        files_meta.append({"name": s.rfilename or getattr(s, "path", None),
+                           "size": size, "sha256": sha})
 
     local_dir = S.model_dir(model_id)
     local_exists = local_dir.is_dir()
@@ -201,6 +204,50 @@ def local_check(path: str | Path, files: list[str]) -> dict:
         "total": len(files),
         "size_gb": round(sum((d / n).stat().st_size for n in files if (d / n).is_file()) / 1e9, 2),
     }
+
+
+def verify_hashes(path: str | Path, files: list[dict]) -> dict:
+    """Verify local files against server-provided sha256 digests."""
+    import hashlib
+
+    d = Path(path)
+    results = []
+    checked = 0
+    ok_count = 0
+    corrupt_count = 0
+    skipped = 0
+    for item in files:
+        name = item["name"]
+        sha256 = item.get("sha256")
+        f = d / name
+        if not f.is_file():
+            results.append({"name": name, "present": False, "ok": None,
+                            "error": "not present locally"})
+            skipped += 1
+            continue
+        if not sha256:
+            results.append({"name": name, "present": True, "ok": None,
+                            "error": "no sha256 on server (not LFS)"})
+            skipped += 1
+            continue
+        h = hashlib.sha256()
+        with open(f, "rb") as fh:
+            for chunk in iter(lambda: fh.read(1 << 20), b""):
+                h.update(chunk)
+        actual = h.hexdigest()
+        ok = actual == sha256.lower()
+        checked += 1
+        if ok:
+            ok_count += 1
+        else:
+            corrupt_count += 1
+        result = {"name": name, "present": True, "ok": ok,
+                  "expected": sha256, "actual": actual}
+        if not ok:
+            result["error"] = "hash mismatch"
+        results.append(result)
+    return {"results": results, "checked": checked, "ok_count": ok_count,
+            "corrupt_count": corrupt_count, "skipped": skipped}
 
 
 def download(model_id: str, dest: str | Path, *, revision: str | None = None,
