@@ -320,7 +320,7 @@ function bindTaskStream() {
 function renderStages(kind) {
   const box = $("stages");
   box.innerHTML = "";
-  const list = kind === "download" ? ["download"] : STAGES;
+  const list = kind === "download" ? ["validate", "download"] : STAGES;
   for (const s of list) {
     const n = el("div", "stage", "");
     n.dataset.stage = s;
@@ -332,7 +332,17 @@ function renderStages(kind) {
 function stageNode(name) {
   return document.querySelector(`.stage[data-stage="${name}"]`);
 }
+function ensureStage(name) {
+  if (stageNode(name)) return;
+  const box = $("stages");
+  const n = el("div", "stage", "");
+  n.dataset.stage = name;
+  n.appendChild(el("span", "dot"));
+  n.appendChild(document.createTextNode(name));
+  box.appendChild(n);
+}
 function setStage(name, status) {
+  ensureStage(name);
   const n = stageNode(name);
   if (!n) return;
   n.classList.remove("running", "done", "fail");
@@ -379,15 +389,20 @@ function onTaskLine(line) {
   if (ev) {
     if (ev.ev === "STAGE") {
       const [status, ...rest] = ev.payload.split(" ");
-      if (status === "start") { renderStages(undefined); } // ensure stages exist
       if (status === "done") { setStage(ev.stage, "done"); appendLog("✔ " + ev.stage + " " + rest.join(" ")); }
       else if (status === "fail") { setStage(ev.stage, "fail"); appendLog("✕ " + ev.stage + " " + rest.join(" ")); }
       else { setStage(ev.stage, "running"); appendLog("▶ " + ev.stage); }
     } else if (ev.ev === "LOG") {
       appendLog(ev.payload);
     } else if (ev.ev === "META") {
-      try { const r = JSON.parse(ev.payload); appendLog("\n— result —\noutput: " + (r.output_dir || "?") + "\n" + JSON.stringify(r.genai_test || {}, null, 1)); }
-      catch (err) { appendLog(ev.payload); }
+      try {
+        const r = JSON.parse(ev.payload);
+        if (r.genai_test) {
+          appendLog("\n— result —\noutput: " + (r.output_dir || "?") + "\n" + JSON.stringify(r.genai_test, null, 1));
+        } else {
+          appendLog("\n— result —\noutput: " + (r.output_dir || "download complete"));
+        }
+      } catch (err) { appendLog(ev.payload); }
     }
   } else {
     appendLog(line);
