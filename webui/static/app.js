@@ -105,10 +105,12 @@ function bindEvents() {
   });
   $("dl-all").addEventListener("click", () => setFilesAll(true));
   $("dl-none").addEventListener("click", () => setFilesAll(false));
-  $("dl-open").addEventListener("click", () => {
+  $("dl-clear").addEventListener("click", () => setFilesAll(false));
+  $("dl-dir-link").addEventListener("click", (e) => {
+    e.preventDefault();
     api("/api/open-dir", { method: "POST", body: JSON.stringify({ path: composeDest() }) })
       .then((r) => { if (!r.ok) appendLog("open folder failed: " + (r.error || "?")); })
-      .catch((e) => appendLog("open folder error: " + e.message));
+      .catch((err) => appendLog("open folder error: " + err.message));
   });
   $("dl-verify").addEventListener("click", verifyHashes);
   $("cv-refresh").addEventListener("click", loadModels);
@@ -185,13 +187,18 @@ async function validateDownload() {
   log.scrollTop = log.scrollHeight;
   $("task-panel").scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
+function setSelectBtns(disabled) {
+  $("dl-all").disabled = disabled;
+  $("dl-none").disabled = disabled;
+  $("dl-clear").disabled = disabled;
+}
 function renderFilePicker(filesMeta, presentFiles) {
   const box = $("dl-files");
   if (!box) return;
   box.innerHTML = "";
   state.dlSelected = new Set();
   const files = filesMeta || [];
-  if (!files.length) { box.classList.remove("show"); return; }
+  if (!files.length) { box.classList.remove("show"); setSelectBtns(true); return; }
   const present = new Set(presentFiles || []);
   for (const f of files) {
     const isPresent = present.has(f.name);
@@ -208,6 +215,7 @@ function renderFilePicker(filesMeta, presentFiles) {
     if (cb.checked && !cb.disabled) state.dlSelected.add(f.name);
   }
   box.classList.add("show");
+  setSelectBtns(false);
 }
 function setFilesAll(value) {
   const box = $("dl-files");
@@ -231,6 +239,11 @@ function renderDlInfo(res) {
     setInfo("dl-info", "Validation failed: " + (i && i.error ? i.error : "unknown error"), "bad");
     $("dl-files").classList.remove("show");
     $("dl-files").textContent = "";
+    setSelectBtns(true);
+    $("dl-tags").innerHTML = "";
+    $("dl-tags").hidden = true;
+    $("dl-hash-card").hidden = true;
+    updateDirLink();
     updateDlChecks();
     return;
   }
@@ -244,16 +257,17 @@ function renderDlInfo(res) {
     const parts = String(i.path || "").split(/[\\/]+/).filter(Boolean);
     $("dl-sub").value = parts[parts.length - 1] || "";
     $("dl-root").value = parts.slice(0, -1).join("\\") || "";
+    $("dl-tags").innerHTML = "";
+    $("dl-tags").hidden = true;
     updateDestPreview();
     state.dlNeededBytes = i.size_bytes;
   } else {
-    const total = i.total_gb != null ? i.total_gb + " GB" : humanSize(i.total_bytes);
-    let html = "Model: " + esc(i.id) + " (" + esc(i.pipeline_tag || "?") + ") · total: " + esc(total) + " · license: " + esc(i.license || "?");
-    if (i.gated) html += "\n⚠ GATED — needs an HF token";
     const files = i.files_meta || [];
+    let html = "";
+    if (i.gated) html += "\n⚠ GATED — needs an HF token";
     if (files.length) {
       const totalBytes = files.reduce((s, f) => s + (Number(f.size) || 0), 0);
-      html += "\n<table class=\"mini-table\"><thead><tr><th>File</th><th>Size</th><th>Purpose</th></tr></thead><tbody>";
+      html += "<table class=\"mini-table\"><thead><tr><th>File</th><th>Size</th><th>Purpose</th></tr></thead><tbody>";
       for (const f of files) {
         html += "<tr><td>" + esc(f.name) + "</td><td>" + esc(humanSize(f.size)) + "</td><td>" + esc(filePurpose(f.name)) + "</td></tr>";
       }
@@ -262,6 +276,13 @@ function renderDlInfo(res) {
     const infoBox = $("dl-info");
     infoBox.innerHTML = html;
     infoBox.className = "info show " + (i.ok ? "ok" : "bad");
+    $("dl-tags").innerHTML =
+      "<span class=\"tag\">" + esc(i.id) + "</span> " +
+      "<span class=\"tag\">" + esc(i.pipeline_tag || "?") + "</span> " +
+      "<span class=\"tag\">" + esc(i.total_gb) + " GB</span> " +
+      "<span class=\"tag\">" + esc(i.license || "?") + "</span> " +
+      "<a class=\"hf-link\" href=\"https://huggingface.co/" + esc(i.id) + "\" target=\"_blank\" rel=\"noopener noreferrer\">Hugging Face <sup>↗</sup></a>";
+    $("dl-tags").hidden = false;
     const org = i.id.split("/")[0];
     const name = i.id.split("/")[1];
     $("dl-sub").value = org + "/" + name;
@@ -280,13 +301,22 @@ function composeDest() {
 }
 function updateDestPreview() {
   $("dl-dest-preview").textContent = composeDest();
+  updateDirLink();
+}
+function updateDirLink() {
+  const link = $("dl-dir-link");
+  if (!link) return;
+  const dest = composeDest();
+  link.textContent = dest;
+  link.hidden = !(state.dlInfo && state.dlInfo.kind === "hf" && dest);
 }
 async function updateLocalStatus() {
   const box = $("dl-local");
   if (!state.dlInfo || state.dlInfo.kind !== "hf" || !state.dlFiles) {
-    box.className = "checkline";
+    box.className = "banner";
     box.textContent = "";
     state.dlLocalComplete = null;
+    $("dl-hash-card").hidden = true;
     updateDlChecks();
     return;
   }
@@ -294,33 +324,33 @@ async function updateLocalStatus() {
   try {
     r = await api("/api/model/local-check", { method: "POST", body: JSON.stringify({ path: composeDest(), files: state.dlFiles }) });
   } catch (e) {
-    box.className = "checkline";
+    box.className = "banner";
     box.textContent = "";
     state.dlLocalComplete = false;
+    $("dl-hash-card").hidden = true;
     updateDlChecks();
     return;
   }
   const M = state.dlFiles.length;
   const missingN = (r.missing && r.missing.length) || 0;
   if (r.complete) {
-    box.className = "checkline ok";
+    box.className = "banner show ok";
     box.textContent = "Already downloaded locally — Download disabled";
   } else if (r.present > 0) {
-    box.className = "checkline bad";
+    box.className = "banner show bad";
     box.textContent = "Local copy exists but incomplete — missing " + missingN + " of " + M + " files: " + ((r.missing || []).join(", "));
   } else {
-    box.className = "checkline ok";
+    box.className = "banner show neutral";
     box.textContent = "Not present locally — will download " + M + " files";
   }
   state.dlLocalComplete = r.complete;
+  $("dl-hash-card").hidden = !(state.dlInfo && state.dlInfo.kind === "hf" && r.present > 0);
   renderFilePicker(state.dlInfo.info.files_meta || [], r.present_files || []);
   updateDlChecks();
 }
 function updateDlChecks() {
   const i = state.dlInfo;
-  const canHash = !!(state.dlInfo && state.dlInfo.kind === "hf" && composeDest());
-  $("dl-open").disabled = !canHash;
-  $("dl-verify").disabled = !canHash;
+  $("dl-verify").disabled = !$("dl-hash-card") || $("dl-hash-card").hidden;
   if (!i) { $("dl-run").disabled = true; return; }
   const needed = (state.dlNeededBytes || 0) * 1.05;
   const free = (state.info.disk_free_gb || 0) * 1e9;
@@ -345,9 +375,15 @@ async function runDownload() {
   await startTask("download", body, "/api/download");
 }
 async function verifyHashes() {
+  const btn = $("dl-verify");
+  const spin = $("dl-vspinner");
   const box = $("dl-hashres");
   const filesMeta = (state.dlInfo && state.dlInfo.info.files_meta) || [];
   const total = filesMeta.length;
+  btn.disabled = true;
+  spin.hidden = false;
+  box.textContent = "Verifying hashes…";
+  box.className = "checkline";
   try {
     const r = await api("/api/model/verify-hash", { method: "POST", body: JSON.stringify({ path: composeDest(), files: filesMeta }) });
     if (r.corrupt_count === 0) {
@@ -368,6 +404,8 @@ async function verifyHashes() {
     box.textContent = "Verify hashes error: " + e.message;
     appendLog("verify hashes error: " + e.message);
   }
+  btn.disabled = false;
+  spin.hidden = true;
 }
 
 /* ---------------------------------------------------------------- Convert tab */

@@ -32,6 +32,7 @@
       <input id="dl-text" placeholder="https://huggingface.co/org/model  |  org/model  |  local path">
       <button id="dl-validate" class="secondary">Validate</button>
     </div>
+    <div id="dl-tags" class="tags"></div>
     <div id="dl-info" class="info"></div>
   </div>
 
@@ -47,18 +48,25 @@
   <div class="card">
     <h2>Destination &amp; checks</h2>
     <p class="desc">Editable target directory. The download button stays disabled until the disk space check passes.</p>
+    <div class="banner" id="dl-local"></div>
     <div class="grid">
       <label>Models root <input id="dl-root" class="mono" value="T:\models"></label>
       <label>Model folder (org/model) <input id="dl-sub" class="mono" placeholder="org/model"></label>
     </div>
-    <div class="row"><div class="mono" id="dl-dest-preview">T:\models\&lt;org&gt;\&lt;model&gt;</div><button id="dl-open" class="secondary" disabled title="Open the download folder in Explorer">Open folder</button></div>
-    <div class="checkline" id="dl-local"></div>
-    <div class="files-head"><span>Files to download</span><span class="row"><button id="dl-verify" class="secondary" disabled>Verify hashes</button><button id="dl-all" class="secondary">All</button><button id="dl-none" class="secondary">None</button></span></div>
-    <div id="dl-hashres" class="checkline"></div>
+    <div class="row"><div class="mono" id="dl-dest-preview">T:\models\&lt;org&gt;\&lt;model&gt;</div></div>
+    <div class="dirline">Open directory: <a id="dl-dir-link" class="dir-link" title="Open in Explorer"></a></div>
+    <div class="files-head"><span>Files to download</span><span class="row"><button id="dl-all" class="secondary" disabled>All</button><button id="dl-none" class="secondary" disabled>None</button><button id="dl-clear" class="secondary" disabled>Clear</button></span></div>
     <div id="dl-files" class="filelist"></div>
     <div id="dl-disk" class="checkline"></div>
     <div id="dl-ram" class="checkline"></div>
     <div class="row"><button id="dl-run" class="primary" disabled>Download</button><span class="spinner" id="dl-spinner" hidden></span><button id="dl-cancel" class="danger" hidden>Cancel</button><div class="progress" id="dl-progress"><div class="fill"></div></div></div>
+  </div>
+
+  <div class="card" id="dl-hash-card" hidden>
+    <h2>Hash verification</h2>
+    <p class="desc">Verify sha256 of the files that are already present locally.</p>
+    <div class="row"><button id="dl-verify" class="secondary" disabled>Verify hashes</button><span class="spinner" id="dl-vspinner" hidden></span></div>
+    <div id="dl-hashres" class="checkline"></div>
   </div>
 
 </section>
