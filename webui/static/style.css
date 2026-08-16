@@ -157,7 +157,7 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .card.pending { background: #fdf9ec; border-color: #e6c76a; }
 .banner.neutral { background: var(--bg); border-color: var(--line); color: var(--muted); }
 
-#dl-hash-card { border-top: 4px dashed var(--ok); margin-top: -14px; }
+#dl-hash-card { border-top: 4px dashed var(--mint-2); margin-top: -14px; }
 #dl-hash-card[hidden] { display: none; }
 
 .tags { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; align-items: center; }

@@ -40,14 +40,14 @@
     <h2>Options</h2>
     <h3>Hugging Face</h3>
     <div class="grid">
-      <label>Revision <input id="dl-rev" placeholder="main"></label>
-      <label>HF Token <input id="dl-token" type="password" placeholder="hf_... (gated models)"></label>
+    <label>Revision <input id="dl-rev" placeholder="main" autocomplete="off" name="ov_revision"></label>
+    <label>HF Token <input id="dl-token" type="password" placeholder="hf_... (gated models)" autocomplete="off" name="ov_hf_token"></label>
     </div>
     <p class="hint">Revision: branch/tag to download. Token: required only for gated models.</p>
 
     <h3>Cache environment</h3>
     <p class="desc">Enter the base directory once; HF_HOME and HF_HUB_CACHE are derived from it.</p>
-    <div class="input-group"><input id="hf-base" class="mono" placeholder="T:\models"></div>
+    <div class="root-group"><select id="hf-drive"></select><input id="hf-base" class="mono" placeholder="cache root path"></div>
     <div id="hf-derived" class="muted mono"></div>
     <div id="hf-env-res" class="checkline"></div>
   </div>
