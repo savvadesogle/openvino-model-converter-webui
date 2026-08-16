@@ -165,7 +165,8 @@ function bindEvents() {
   }
   $("dl-validate").addEventListener("click", validateDownload);
   $("dl-run").addEventListener("click", runDownload);
-  $("dl-tags").addEventListener("click", (e) => {
+  const tagsEl = $("dl-tags");
+  if (tagsEl) tagsEl.addEventListener("click", (e) => {
     const t = e.target && e.target.closest ? e.target.closest("[data-fill]") : null;
     if (t && t.dataset.fill) {
       $("dl-text").value = t.dataset.fill;
@@ -368,7 +369,7 @@ function renderDlInfo(res) {
     infoBox.innerHTML = html;
     infoBox.className = "info show " + (i.ok ? "ok" : "bad");
     $("dl-tags").innerHTML =
-      "<span class=\"tag tag-link\" data-fill=\"" + esc(i.id) + "\">" + esc(i.id) + "</span> " +
+      "<span class=\"tag tag-link\" title=\"Click to fill and validate\" data-fill=\"" + esc(i.id) + "\">" + esc(i.id) + "</span> " +
       "<span class=\"tag\">" + esc(i.pipeline_tag || "?") + "</span> " +
       "<span class=\"tag\">" + esc(i.total_gb) + " GB</span> " +
       "<span class=\"tag\">" + esc(i.license || "?") + "</span> " +
