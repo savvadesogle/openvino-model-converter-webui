@@ -73,6 +73,10 @@ class VerifyHashIn(BaseModel):
     files: list[dict] = []
 
 
+class MkdirIn(BaseModel):
+    path: str
+
+
 @app.get("/")
 def index():
     return FileResponse(STATIC / "index.html")
@@ -97,6 +101,31 @@ def info():
 @app.get("/api/modes")
 def api_modes():
     return {"modes": modes.modes_dict()}
+
+
+class MkdirIn(BaseModel):
+    path: str
+
+
+@app.post("/api/mkdir")
+def api_mkdir(body: MkdirIn):
+    r"""Create a directory, but ONLY under the configured models root (T:\models).
+
+    Guards against accidental writes to other drives / network shares.
+    """
+    from pathlib import Path
+
+    p = Path(body.path)
+    try:
+        resolved = p.expanduser().resolve(strict=False)
+        root = S.MODELS_ROOT.expanduser().resolve(strict=False)
+        if not resolved.is_relative_to(root):
+            return {"ok": False,
+                    "error": f"refusing to create a directory outside {S.MODELS_ROOT}"}
+        p.mkdir(parents=True, exist_ok=True)
+        return {"ok": True, "path": str(p)}
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "error": str(e)}
 
 
 @app.post("/api/modes/self-test")
@@ -159,6 +188,17 @@ def api_open_dir(body: OpenDirIn):
     except Exception as e:  # noqa: BLE001
         return {"ok": False, "error": str(e)}
     return {"ok": True}
+
+
+@app.post("/api/mkdir")
+def api_mkdir(body: MkdirIn):
+    from pathlib import Path
+    p = Path(body.path)
+    try:
+        p.mkdir(parents=True, exist_ok=True)
+        return {"ok": True, "path": str(p)}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
 
 
 @app.post("/api/model/verify-hash")

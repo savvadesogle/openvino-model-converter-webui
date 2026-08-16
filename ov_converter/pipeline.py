@@ -117,7 +117,10 @@ def run(cfg: ConvertConfig, emit: Emitter | None = None) -> dict:
             pass
         else:
             cfg.task = "image-text-to-text"  # refined after source resolution
-        emit.done("validate", f"source={src}")
+        if src is not None:
+            emit.done("validate", f"source={src}")
+        else:
+            emit.done("validate", "ok")
     except Exception as e:  # noqa: BLE001
         emit.fail("validate", str(e))
         return result

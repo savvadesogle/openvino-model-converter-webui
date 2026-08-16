@@ -38,12 +38,15 @@
 
   <div class="card">
     <h2>Options</h2>
-    <p class="desc">Revision and token are optional. Gated models need an HF token; the include filter fetches only what is needed for conversion.</p>
+    <h3>Hugging Face</h3>
     <div class="grid">
       <label>Revision <input id="dl-rev" placeholder="main"></label>
       <label>HF Token <input id="dl-token" type="password" placeholder="hf_... (gated models)"></label>
     </div>
-    <p class="desc">HF cache environment (defaults to T:\models\.hf-cache). Editable; validated on change.</p>
+    <p class="hint">Revision: branch/tag to download. Token: required only for gated models.</p>
+
+    <h3>Cache environment</h3>
+    <p class="desc">Where Hugging Face stores downloaded/cache data. Create the folder if missing (the UI will offer this).</p>
     <div class="grid">
       <label>HF_HOME <input id="hf-home" class="mono" placeholder="T:\models\.hf-cache"></label>
       <label>HF_HUB_CACHE <input id="hf-hub-cache" class="mono" placeholder="T:\models\.hf-cache\hub"></label>
@@ -60,10 +63,13 @@
       <label>Model folder (org/model) <input id="dl-sub" class="mono" placeholder="org/model"></label>
     </div>
     <div class="dirline">Open directory: <a id="dl-dir-link" class="dir-link" title="Open in Explorer"></a></div>
-    <div class="files-head"><span>Files to download</span><span class="row"><button id="dl-all" class="secondary" disabled>All</button><button id="dl-none" class="secondary" disabled>None</button></span></div>
+    <div class="files-head">
+      <h3>Files to download</h3>
+      <span class="row"><button id="dl-all" class="secondary" disabled>All</button><button id="dl-none" class="secondary" disabled>None</button></span>
+    </div>
     <div id="dl-files" class="filelist"></div>
     <div id="dl-disk" class="checkline"></div>
-    <div class="row"><button id="dl-run" class="primary" disabled>Download</button><span class="spinner" id="dl-spinner" hidden></span><button id="dl-cancel" class="danger" hidden>Cancel</button><div class="progress" id="dl-progress"><div class="fill"></div></div></div>
+    <div class="row"><button id="dl-run" class="primary" disabled>Download</button><span class="spinner" id="dl-spinner" hidden></span><div class="progress" id="dl-progress"><div class="fill"></div></div><button id="dl-cancel" class="danger" hidden>Cancel</button></div>
   </div>
 
   <div class="card" id="dl-hash-card" hidden>
@@ -161,7 +167,7 @@
     <div id="cv-disk" class="checkline"></div>
     <div id="cv-ram" class="checkline"></div>
     <div id="cv-errors" class="errors"></div>
-    <div class="row"><button id="cv-run" class="primary" disabled>Convert</button><span class="spinner" id="cv-spinner" hidden></span><button id="cv-cancel" class="danger" hidden>Cancel</button><div class="progress" id="cv-progress"><div class="fill"></div></div></div>
+    <div class="row"><button id="cv-run" class="primary" disabled>Convert</button><span class="spinner" id="cv-spinner" hidden></span><div class="progress" id="cv-progress"><div class="fill"></div></div><button id="cv-cancel" class="danger" hidden>Cancel</button></div>
   </div>
 
 </section>
@@ -174,7 +180,7 @@
   <div id="stages" class="stages"></div>
   <pre id="task-log"></pre>
   <div class="row">
-    <button id="task-cancel" class="danger">Cancel</button>
+    <button id="task-cancel" class="danger">STOP</button>
     <button id="task-clear" class="secondary">Clear</button>
   </div>
 </section>

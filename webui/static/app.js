@@ -29,6 +29,9 @@ function humanSize(bytes) {
 function esc(s) {
   return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 }
+function short(s) {
+  return String(s).length === 64 ? String(s).slice(0, 12) + "\u2026" : String(s);
+}
 function filePurpose(name) {
   if (name === "config.json") return "Model config";
   if (name === "model.safetensors.index.json") return "Weights index";
@@ -96,14 +99,46 @@ async function validateHfEnv() {
     return;
   }
   try {
-    const results = await Promise.all(Object.values(paths).map((p) => api("/api/disk?path=" + encodeURIComponent(p))));
+    const entries = Object.entries(paths);
+    const results = await Promise.all(entries.map(([, p]) => api("/api/disk?path=" + encodeURIComponent(p))));
+    const driveOf = (p) => (String(p).match(/^([A-Za-z]):/) || [])[1] || "?";
+    for (let idx = 0; idx < entries.length; idx++) {
+      const p = entries[idx][1];
+      const r = results[idx];
+      if (r.ok === false) {
+        let driveOk = false;
+        const drive = driveOf(p);
+        if (drive !== "?") {
+          try { driveOk = (await api("/api/disk?path=" + encodeURIComponent(drive + ":\\"))).ok === true; } catch (e) {}
+        }
+        if (!driveOk) {
+          res.className = "banner show bad";
+          res.textContent = "Insufficient disk (invalid drive)";
+          return;
+        }
+        res.className = "banner show bad";
+        res.textContent = "Directory does not exist: " + p;
+        const create = el("button", "btn btn-small", "Create");
+        create.id = "hf-create";
+        create.onclick = async () => {
+          try {
+            await api("/api/mkdir", { method: "POST", body: JSON.stringify({ path: p }) });
+            validateHfEnv();
+          } catch (e2) {
+            res.textContent = "Create failed: " + e2.message;
+          }
+        };
+        res.appendChild(create);
+        return;
+      }
+    }
     const free = Math.min(...results.map((r) => Number(r.free_gb) || 0));
     if (free < 10) {
       res.className = "banner show bad";
       res.textContent = "Insufficient disk (" + free.toFixed(1) + " GB free on cache drive)";
       return;
     }
-    const drive = (Object.values(paths)[0].match(/^([A-Za-z]):/) || [])[1] || "?";
+    const drive = driveOf(Object.values(paths)[0]);
     res.className = "banner show ok";
     res.textContent = "Cache paths OK — drive " + drive + ": has " + free.toFixed(1) + " GB free";
   } catch (e) {
@@ -120,11 +155,31 @@ function bindEvents() {
       document.querySelectorAll(".panel").forEach((p) => p.classList.toggle("active", p.id === "panel-" + t.dataset.panel));
     });
   });
+  if (!document.getElementById("dl-path-spinner")) {
+    const sp = document.createElement("span");
+    sp.className = "spinner";
+    sp.id = "dl-path-spinner";
+    sp.hidden = true;
+    const dir = document.querySelector(".dirline");
+    if (dir) dir.appendChild(sp);
+  }
   $("dl-validate").addEventListener("click", validateDownload);
   $("dl-run").addEventListener("click", runDownload);
+  $("dl-tags").addEventListener("click", (e) => {
+    const t = e.target && e.target.closest ? e.target.closest("[data-fill]") : null;
+    if (t && t.dataset.fill) {
+      $("dl-text").value = t.dataset.fill;
+      validateDownload();
+    }
+  });
   const onDestInput = () => {
     clearTimeout(dlLocalDebounce);
-    dlLocalDebounce = setTimeout(() => { updateDirLink(); updateLocalStatus(); }, 250);
+    dlLocalDebounce = setTimeout(() => {
+      const sp = $("dl-path-spinner");
+      if (sp) sp.hidden = false;
+      updateDirLink();
+      updateLocalStatus();
+    }, 250);
   };
   $("dl-root").addEventListener("input", onDestInput);
   $("dl-sub").addEventListener("input", onDestInput);
@@ -223,8 +278,8 @@ async function validateDownload() {
   $("task-panel").scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
 function setSelectBtns() {
-  const hasSel = state.dlSelected && state.dlSelected.size > 0;
-  const disabled = state.dlLocalComplete === true || !hasSel;
+  const hasFiles = !!(state.dlFiles && state.dlFiles.length);
+  const disabled = state.dlLocalComplete === true || !hasFiles;
   $("dl-all").disabled = disabled;
   $("dl-none").disabled = disabled;
 }
@@ -313,7 +368,7 @@ function renderDlInfo(res) {
     infoBox.innerHTML = html;
     infoBox.className = "info show " + (i.ok ? "ok" : "bad");
     $("dl-tags").innerHTML =
-      "<span class=\"tag\">" + esc(i.id) + "</span> " +
+      "<span class=\"tag tag-link\" data-fill=\"" + esc(i.id) + "\">" + esc(i.id) + "</span> " +
       "<span class=\"tag\">" + esc(i.pipeline_tag || "?") + "</span> " +
       "<span class=\"tag\">" + esc(i.total_gb) + " GB</span> " +
       "<span class=\"tag\">" + esc(i.license || "?") + "</span> " +
@@ -338,35 +393,45 @@ function composeDest() {
 function updateDirLink() {
   const link = $("dl-dir-link");
   if (!link) return;
-  const show = state.dlInfo && state.dlInfo.kind === "hf" && state.dlLocalExists === true;
+  const show = !!(state.dlInfo && state.dlInfo.kind === "hf");
+  const active = show && state.dlLocalExists === true;
   link.hidden = !show;
   link.textContent = show ? composeDest() : "";
+  link.classList.toggle("active", active);
+  link.style.pointerEvents = active ? "auto" : "none";
 }
 async function updateLocalStatus() {
   const box = $("dl-local");
+  const sp = $("dl-path-spinner");
   if (!state.dlInfo || state.dlInfo.kind !== "hf" || !state.dlFiles) {
+    if (sp) sp.hidden = true;
     box.className = "banner";
     box.textContent = "";
     state.dlLocalComplete = null;
     state.dlLocalExists = false;
     $("dl-dest-card").classList.toggle("done", false);
     $("dl-hash-card").hidden = true;
+    updateDirLink();
     updateDlChecks();
     return;
   }
   let r;
+  if (sp) sp.hidden = false;
   try {
     r = await api("/api/model/local-check", { method: "POST", body: JSON.stringify({ path: composeDest(), files: state.dlFiles }) });
   } catch (e) {
+    if (sp) sp.hidden = true;
     box.className = "banner";
     box.textContent = "";
     state.dlLocalComplete = false;
     state.dlLocalExists = false;
     $("dl-dest-card").classList.toggle("done", false);
     $("dl-hash-card").hidden = true;
+    updateDirLink();
     updateDlChecks();
     return;
   }
+  if (sp) sp.hidden = true;
   const M = state.dlFiles.length;
   const missingN = (r.missing && r.missing.length) || 0;
   if (r.complete) {
@@ -381,6 +446,7 @@ async function updateLocalStatus() {
   }
   state.dlLocalComplete = r.complete;
   state.dlLocalExists = r.exists === true;
+  updateDirLink();
   $("dl-dest-card").classList.toggle("done", state.dlLocalComplete === true);
   $("dl-hash-card").hidden = !(state.dlInfo && state.dlInfo.kind === "hf" && r.present > 0);
   renderFilePicker(state.dlInfo.info.files_meta || [], r.present_files || []);
@@ -391,7 +457,16 @@ function updateDlChecks() {
   setSelectBtns();
   $("dl-verify").disabled = !$("dl-hash-card") || $("dl-hash-card").hidden;
   if (!i) { $("dl-run").disabled = true; return; }
-  const needed = (state.dlNeededBytes || 0) * 1.05;
+  const meta = (state.dlInfo.info.files_meta) || [];
+  const byName = new Map(meta.map((f) => [f.name, f]));
+  let selBytes = 0;
+  if (state.dlSelected) {
+    for (const name of state.dlSelected) {
+      const m = byName.get(name);
+      if (m) selBytes += Number(m.size) || 0;
+    }
+  }
+  const needed = selBytes * 1.05;
   const free = (state.info.disk_free_gb || 0) * 1e9;
   const okDisk = free >= needed;
   $("dl-disk").innerHTML = "";
@@ -420,26 +495,31 @@ async function verifyHashes() {
   const spin = $("dl-vspinner");
   const box = $("dl-hashres");
   const filesMeta = (state.dlInfo && state.dlInfo.info.files_meta) || [];
-  const total = filesMeta.length;
   btn.disabled = true;
   spin.hidden = false;
   box.textContent = "Verifying hashes…";
   box.className = "checkline";
   try {
     const r = await api("/api/model/verify-hash", { method: "POST", body: JSON.stringify({ path: composeDest(), files: filesMeta }) });
-    if (r.corrupt_count === 0) {
-      const msg = "Hashes verified: " + r.checked + " files OK";
-      box.className = "checkline ok";
-      box.textContent = msg;
-      appendLog(msg);
-    } else {
-      const bad = (r.results || []).filter((x) => x.ok === false || x.present === false);
-      const names = bad.map((x) => esc(x.name));
-      const msg = "Corrupt/missing: " + bad.map((x) => x.name).join(", ") + " (" + r.checked + " of " + total + " checked)";
-      box.className = "checkline bad";
-      box.innerHTML = "Corrupt/missing: " + names.join(", ") + " (" + r.checked + " of " + total + " checked)";
-      appendLog(msg);
+    const results = r.results || [];
+    const lines = [];
+    for (const x of results) {
+      if (x.present === true && x.ok === true) {
+        lines.push(esc(x.name) + " — ok (ref sha256: " + short(x.sha) + ")");
+      } else if (x.present === true && x.ok === false) {
+        lines.push(esc(x.name) + " — MISMATCH");
+      } else {
+        lines.push(esc(x.name) + " — not present");
+      }
     }
+    const corrupt = results.filter((x) => !(x.present === true && x.ok === true)).length;
+    const header = corrupt === 0
+      ? "Hashes verified (" + results.length + " files)"
+      : "Corrupt / missing (" + corrupt + ")";
+    box.className = "checkline " + (corrupt === 0 ? "ok" : "bad");
+    box.innerHTML = header + "<br>" + lines.join("<br>");
+    appendLog(header);
+    lines.forEach((l) => appendLog(l));
   } catch (e) {
     box.className = "checkline bad";
     box.textContent = "Verify hashes error: " + e.message;
