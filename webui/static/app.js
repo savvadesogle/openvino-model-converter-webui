@@ -61,6 +61,7 @@ async function api(url, opts) {
 async function init() {
   await Promise.all([loadInfo(), loadModes(), loadModels()]);
   bindEvents();
+  loadDrives();
   renderModes();
   renderModelSelect();
   bindTaskStream();
@@ -69,8 +70,8 @@ async function loadInfo() {
   state.info = await api("/api/info");
   $("paths").textContent =
     `cache: ${state.info.paths.cache}   ·   originals: ${state.info.paths.originals}   ·   output: ${state.info.paths.output}`;
-  $("hf-home").value = state.info.paths.cache;
-  $("hf-hub-cache").value = state.info.paths.cache + "\\hub";
+  $("hf-base").value = state.info.paths.originals || "";
+  updateHfDerived();
   validateHfEnv();
   const chips = $("versions");
   chips.innerHTML = "";
@@ -88,71 +89,64 @@ async function loadModels() {
   state.converted = d.converted;
   renderModelSelect();
 }
+function updateHfDerived() {
+  const base = $("hf-base").value.trim().replace(/[\\/]+$/, "");
+  const home = base ? base + osSep() + ".hf-cache" : "";
+  const hub = home ? home + osSep() + "hub" : "";
+  $("hf-derived").textContent = base ? ("HF_HOME=" + home + "\nHF_HUB_CACHE=" + hub) : "";
+  return { home, hub };
+}
 async function validateHfEnv() {
   const res = $("hf-env-res");
   if (!res) return;
   document.querySelectorAll(".create-btn").forEach((b) => b.remove());
-  const paths = { "HF_HOME": $("hf-home").value.trim(), "HF_HUB_CACHE": $("hf-hub-cache").value.trim() };
-  const bad = Object.entries(paths).find(([, v]) => v === "" || !/^[A-Za-z]:[\\/]/.test(v));
-  if (bad) {
+  const base = $("hf-base").value.trim();
+  if (!base || !/^[A-Za-z]:[\\/]/.test(base)) {
     res.className = "banner show bad";
-    res.textContent = "Invalid path: " + (bad[1] || "(" + bad[0] + " is empty)");
+    res.textContent = base ? "Invalid base path" : "HF base path is empty";
     return;
   }
+  const hf = updateHfDerived();
   try {
-    const entries = Object.entries(paths);
-    const results = await Promise.all(entries.map(([, p]) => api("/api/disk?path=" + encodeURIComponent(p))));
-    const driveOf = (p) => (String(p).match(/^([A-Za-z]):/) || [])[1] || "?";
-    let driveInvalid = false;
-    let anyMissing = false;
-    for (let idx = 0; idx < entries.length; idx++) {
-      const [key, p] = entries[idx];
-      const r = results[idx];
-      if (r.ok === false) {
-        let driveOk = false;
-        const drive = driveOf(p);
-        if (drive !== "?") {
-          try { driveOk = (await api("/api/disk?path=" + encodeURIComponent(drive + ":\\"))).ok === true; } catch (e) {}
-        }
-        if (!driveOk) { driveInvalid = true; continue; }
-        anyMissing = true;
-        const input = document.getElementById(key === "HF_HOME" ? "hf-home" : "hf-hub-cache");
-        const group = input ? input.closest(".input-group") : null;
-        if (group && !group.querySelector(".create-btn")) {
-          const create = el("button", "create-btn", "Create now?");
-          create.id = key === "HF_HOME" ? "create-btn-hf-home" : "create-btn-hf-hub-cache";
-          create.onclick = async () => {
-            try {
-              await api("/api/mkdir", { method: "POST", body: JSON.stringify({ path: p }) });
-              create.remove();
-              validateHfEnv();
-            } catch (e2) {
-              res.textContent = "Create failed: " + e2.message;
-            }
-          };
-          group.appendChild(create);
-        }
+    const r = await api("/api/disk?path=" + encodeURIComponent(base));
+    if (r.ok === false) {
+      const drive = (String(base).match(/^([A-Za-z]):/) || [])[1] || "?";
+      let driveOk = false;
+      if (drive !== "?") {
+        try { driveOk = (await api("/api/disk?path=" + encodeURIComponent(drive + ":\\"))).ok === true; } catch (e) {}
       }
-    }
-    if (driveInvalid) {
+      if (!driveOk) {
+        res.className = "banner show bad";
+        res.textContent = "Insufficient disk (invalid drive)";
+        return;
+      }
+      const group = $("hf-base").closest(".input-group");
+      if (group && !group.querySelector(".create-btn")) {
+        const create = el("button", "create-btn", "Create now?");
+        create.id = "create-btn-hf-base";
+        create.onclick = async () => {
+          try {
+            await api("/api/mkdir", { method: "POST", body: JSON.stringify({ path: base }) });
+            create.remove();
+            validateHfEnv();
+          } catch (e2) {
+            res.textContent = "Create failed: " + e2.message;
+          }
+        };
+        group.appendChild(create);
+      }
       res.className = "banner show bad";
-      res.textContent = "Insufficient disk (invalid drive)";
+      res.textContent = 'Missing folder — use "Create now?"';
       return;
     }
-    if (anyMissing) {
-      res.className = "banner show bad";
-      res.textContent = 'Missing folder(s) — use "Create now?"';
-      return;
-    }
-    const free = Math.min(...results.map((r) => Number(r.free_gb) || 0));
+    const free = Number(r.free_gb) || 0;
     if (free < 10) {
       res.className = "banner show bad";
       res.textContent = "Insufficient disk (" + free.toFixed(1) + " GB free on cache drive)";
       return;
     }
-    const drive = driveOf(Object.values(paths)[0]);
     res.className = "banner show ok";
-    res.textContent = "Cache paths OK — drive " + drive + ": has " + free.toFixed(1) + " GB free";
+    res.textContent = "HF paths OK — drive " + drive + ": has " + free.toFixed(1) + " GB free\nHF_HOME=" + hf.home + "\nHF_HUB_CACHE=" + hf.hub;
   } catch (e) {
     res.className = "banner show bad";
     res.textContent = "Error checking cache disk: " + e.message;
@@ -190,8 +184,20 @@ function bindEvents() {
       updateLocalStatus();
     }, 250);
   };
-  $("dl-root").addEventListener("input", onDestInput);
-  $("dl-sub").addEventListener("input", onDestInput);
+  $("dl-root").addEventListener("input", () => { syncDriveFromRoot(); onDestInput(); });
+  $("dl-drive").addEventListener("change", syncRootFromDrive);
+  $("dl-sub").addEventListener("input", () => {
+    const v = $("dl-sub").value;
+    const n = normalizeSub(v);
+    if (n !== v) $("dl-sub").value = n;
+    updateDirLink();
+    clearTimeout(dlLocalDebounce);
+    dlLocalDebounce = setTimeout(() => {
+      const sp = $("dl-path-spinner");
+      if (sp) sp.hidden = false;
+      updateLocalStatus();
+    }, 250);
+  });
   $("dl-files").addEventListener("change", () => {
     state.dlSelected = new Set();
     document.querySelectorAll("#dl-files input[type=checkbox]:checked:not(:disabled)").forEach((cb) => state.dlSelected.add(cb.value));
@@ -200,11 +206,11 @@ function bindEvents() {
   $("dl-all").addEventListener("click", () => setFilesAll(true));
   $("dl-none").addEventListener("click", () => setFilesAll(false));
   const onHfEnvInput = () => {
+    updateHfDerived();
     clearTimeout(hfEnvDebounce);
     hfEnvDebounce = setTimeout(validateHfEnv, 300);
   };
-  $("hf-home").addEventListener("input", onHfEnvInput);
-  $("hf-hub-cache").addEventListener("input", onHfEnvInput);
+  $("hf-base").addEventListener("input", onHfEnvInput);
   $("dl-dir-link").addEventListener("click", (e) => {
     e.preventDefault();
     api("/api/open-dir", { method: "POST", body: JSON.stringify({ path: composeDest() }) })
@@ -248,6 +254,16 @@ function ensureTaskPanel() {
   chip.className = "chip busy";
 }
 async function validateDownload() {
+  if ($("dl-tags")) { $("dl-tags").innerHTML = ""; $("dl-tags").hidden = true; }
+  if ($("dl-info")) { $("dl-info").innerHTML = ""; $("dl-info").className = "info"; }
+  if ($("dl-files")) { $("dl-files").innerHTML = ""; $("dl-files").classList.remove("show"); }
+  if ($("dl-local")) { $("dl-local").className = "banner"; $("dl-local").textContent = ""; }
+  if ($("dl-hashres")) { $("dl-hashres").textContent = ""; $("dl-hashres").className = "checkline"; }
+  if ($("dl-hash-card")) $("dl-hash-card").hidden = true;
+  state.dlFiles = null;
+  state.dlSelected = null;
+  state.dlLocalComplete = null;
+  state.dlLocalExists = null;
   const text = $("dl-text").value.trim();
   if (!text) return setInfo("dl-info", "Enter a model link / id / path.", "bad");
   setInfo("dl-info", "Validating…", "ok");
@@ -400,11 +416,57 @@ function composeDest() {
   const sub = $("dl-sub").value.trim().replace(/^[\\/]+/, "").split(/[\\/]+/).join(osSep());
   return root + osSep() + sub;
 }
+async function loadDrives() {
+  const d = await api("/api/drives");
+  const sel = $("dl-drive");
+  if (!sel) return;
+  sel.innerHTML = "";
+  (d.drives || []).forEach((drv) => {
+    const o = document.createElement("option");
+    o.value = drv;
+    o.textContent = drv;
+    sel.appendChild(o);
+  });
+  syncDriveFromRoot();
+}
+function syncDriveFromRoot() {
+  const sel = $("dl-drive");
+  if (!sel) return;
+  const root = $("dl-root").value.trim();
+  const m = /^([A-Za-z]:)[\\/]/.exec(root);
+  let drive = m ? m[1] : null;
+  if (!drive && osSep() === "/" && root.startsWith("/")) drive = "/";
+  if (!drive) return;
+  if (![...sel.options].some((o) => o.value === drive)) {
+    const o = document.createElement("option");
+    o.value = drive;
+    o.textContent = drive;
+    sel.appendChild(o);
+  }
+  sel.value = drive;
+}
+function syncRootFromDrive() {
+  const sel = $("dl-drive");
+  if (!sel) return;
+  const newDrive = sel.value;
+  if (!newDrive) return;
+  const root = $("dl-root").value.trim();
+  let rest = "";
+  const m = /^[A-Za-z]:[\\/]/.exec(root);
+  if (m) rest = root.slice(m[0].length);
+  else if (osSep() === "/" && root.startsWith("/")) rest = root.replace(/^\/+/, "");
+  $("dl-root").value = rest ? newDrive + osSep() + rest : newDrive;
+  updateDirLink();
+  clearTimeout(dlLocalDebounce);
+  dlLocalDebounce = setTimeout(updateLocalStatus, 250);
+}
 function updateDirLink() {
   const link = $("dl-dir-link");
   if (!link) return;
   const show = !!(state.dlInfo && state.dlInfo.kind === "hf");
   const active = show && state.dlLocalExists === true;
+  const lab = document.querySelector(".dir-label");
+  if (lab) lab.hidden = !(show && active);
   link.hidden = !show;
   link.textContent = show ? composeDest() + (active ? "" : "  (folder not found)") : "";
   link.classList.toggle("active", active);
@@ -467,10 +529,14 @@ async function updateLocalStatus() {
   renderFilePicker(state.dlInfo.info.files_meta || [], r.present_files || []);
   updateDlChecks();
 }
+function normalizeSub(v) { return v.trim().replace(/[\\/]+/g, osSep()); }
+function subValid(v) { return /^[A-Za-z0-9_.-]+[/\\][A-Za-z0-9_.-]+$/.test(v.trim()); }
 function updateDlChecks() {
   const i = state.dlInfo;
   setSelectBtns();
   $("dl-verify").disabled = !$("dl-hash-card") || $("dl-hash-card").hidden;
+  const subOk = subValid($("dl-sub").value);
+  $("dl-sub").classList.toggle("invalid", !subOk && $("dl-sub").value.trim() !== "");
   if (!i) { $("dl-run").disabled = true; return; }
   const meta = (state.dlInfo.info.files_meta) || [];
   const byName = new Map(meta.map((f) => [f.name, f]));
@@ -489,18 +555,19 @@ function updateDlChecks() {
     okDisk ? `Disk: OK (free ${gb(free)} GB ≥ needed ${gb(needed)} GB)` : `Disk: NOT ENOUGH (free ${gb(free)} GB < needed ${gb(needed)} GB)`));
   const dlBtn = $("dl-run");
   const hasSel = state.dlSelected && state.dlSelected.size > 0;
-  dlBtn.disabled = !(okDisk && i.kind === "hf" && i.info.ok && state.dlLocalComplete === false && hasSel);
+  dlBtn.disabled = !(okDisk && i.kind === "hf" && i.info.ok && state.dlLocalComplete === false && hasSel && subOk);
 }
 async function runDownload() {
   if (!state.dlInfo || state.dlInfo.kind !== "hf") return;
   const id = state.dlInfo.info.id;
+  const hf = updateHfDerived();
   const body = {
     model_id: id,
     dest: composeDest() || null,
     revision: $("dl-rev").value || null,
     token: $("dl-token").value || null,
-    hf_home: $("hf-home").value.trim() || null,
-    hf_hub_cache: $("hf-hub-cache").value.trim() || null,
+    hf_home: hf.home || null,
+    hf_hub_cache: hf.hub || null,
     files: state.dlSelected ? [...state.dlSelected] : null,
   };
   await startTask("download", body, "/api/download");
@@ -753,12 +820,13 @@ function estimateConvertNeeded(params, bits) {
 }
 
 async function runConvert() {
+  const hf = updateHfDerived();
   const cfg = {
     model_id: currentBase(),
     model_path: $("cv-model").value && !$("cv-model").value.startsWith("ov:") ? $("cv-model").value : null,
     download: $("cv-download-first").checked,
-    hf_home: $("hf-home").value.trim() || null,
-    hf_hub_cache: $("hf-hub-cache").value.trim() || null,
+    hf_home: hf.home || null,
+    hf_hub_cache: hf.hub || null,
     task: $("cv-task").value.trim(),
     mode: state.currentMode ? state.currentMode.id : "int4_sym",
     group_size: Number($("cv-group").value),
@@ -864,9 +932,17 @@ async function startTask(kind, body, url) {
   };
   es.addEventListener("done", async (e) => {
     es.close();
-    try { const d = JSON.parse(e.data); $("task-status").textContent = d.returncode === 0 ? "completed" : "failed (exit " + d.returncode + ")"; }
-    catch (err) { $("task-status").textContent = "done"; }
-    $("task-status").className = "chip done";
+    try {
+      const d = JSON.parse(e.data);
+      if (d.returncode === 0) {
+        $("task-status").textContent = (state.taskKind ? state.taskKind + " completed" : "completed");
+        $("task-status").className = "chip done";
+      } else {
+        $("task-status").textContent = (state.taskKind ? state.taskKind + " FAILED" : "FAILED");
+        $("task-status").className = "chip failed";
+      }
+    }
+    catch (err) { $("task-status").textContent = "done"; $("task-status").className = "chip done"; }
     const wasDl = state.taskKind === "download";
     resetTaskUi();
     if (wasDl) { await updateLocalStatus(); updateDlChecks(); }

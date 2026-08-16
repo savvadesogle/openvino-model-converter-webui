@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import string
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
@@ -98,6 +99,16 @@ def info():
     }
 
 
+@app.get("/api/drives")
+def api_drives():
+    import os
+    if os.name == "nt":
+        drives = [f"{c}:\\" for c in string.ascii_uppercase if os.path.exists(f"{c}:\\")]
+    else:
+        drives = ["/"]
+    return {"drives": drives}
+
+
 @app.get("/api/modes")
 def api_modes():
     return {"modes": modes.modes_dict()}
@@ -188,17 +199,6 @@ def api_open_dir(body: OpenDirIn):
     except Exception as e:  # noqa: BLE001
         return {"ok": False, "error": str(e)}
     return {"ok": True}
-
-
-@app.post("/api/mkdir")
-def api_mkdir(body: MkdirIn):
-    from pathlib import Path
-    p = Path(body.path)
-    try:
-        p.mkdir(parents=True, exist_ok=True)
-        return {"ok": True, "path": str(p)}
-    except Exception as e:
-        return {"ok": False, "error": str(e)}
 
 
 @app.post("/api/model/verify-hash")

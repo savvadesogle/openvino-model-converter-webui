@@ -46,11 +46,9 @@
     <p class="hint">Revision: branch/tag to download. Token: required only for gated models.</p>
 
     <h3>Cache environment</h3>
-    <p class="desc">Where Hugging Face stores downloaded/cache data. Create the folder if missing (the UI will offer this).</p>
-    <div class="grid">
-      <label>HF_HOME <div class="input-group"><input id="hf-home" class="mono" placeholder="T:\models\.hf-cache"></div></label>
-      <label>HF_HUB_CACHE <div class="input-group"><input id="hf-hub-cache" class="mono" placeholder="T:\models\.hf-cache\hub"></div></label>
-    </div>
+    <p class="desc">Enter the base directory once; HF_HOME and HF_HUB_CACHE are derived from it.</p>
+    <div class="input-group"><input id="hf-base" class="mono" placeholder="T:\models"></div>
+    <div id="hf-derived" class="muted mono"></div>
     <div id="hf-env-res" class="checkline"></div>
   </div>
 
@@ -59,17 +57,17 @@
     <p class="desc">Editable target directory. The download button stays disabled until the disk space check passes.</p>
     <div class="banner" id="dl-local"></div>
     <div class="grid">
-      <label>Models root <input id="dl-root" class="mono" placeholder="Models root"></label>
+      <label>Models root <div class="root-group"><select id="dl-drive"></select><input id="dl-root" class="mono" placeholder="Models path"></div></label>
       <label>Model folder (org/model) <input id="dl-sub" class="mono" placeholder="org/model"></label>
     </div>
-    <div class="dirline">Open directory: <a id="dl-dir-link" class="dir-link" title="Open in Explorer"></a></div>
+    <div class="dirline"><span class="dir-label">Open directory:</span> <a id="dl-dir-link" class="dir-link" title="Open in Explorer"></a></div>
     <div class="files-head">
       <h3>Files to download</h3>
       <span class="row"><button id="dl-all" class="secondary" disabled>All</button><button id="dl-none" class="secondary" disabled>None</button></span>
     </div>
     <div id="dl-files" class="filelist"></div>
     <div id="dl-disk" class="checkline"></div>
-    <div class="row"><button id="dl-run" class="primary" disabled>Download</button><span class="dl-check" id="dl-check" hidden>✓</span><span class="spinner" id="dl-spinner" hidden></span><div class="progress" id="dl-progress"><div class="fill"></div></div><button id="dl-cancel" class="danger" hidden>Cancel</button></div>
+    <div class="row"><button id="dl-run" class="primary" disabled>Download</button><span class="spinner" id="dl-spinner" hidden></span><div class="progress" id="dl-progress"><div class="fill"></div></div><button id="dl-cancel" class="danger" hidden>Cancel</button></div>
   </div>
 
   <div class="card" id="dl-hash-card" hidden>
@@ -176,7 +174,7 @@
 
 <!-- ============================================================ TASK -->
 <section id="task-panel" class="card task">
-  <div class="task-head"><h2>Task <span id="task-status" class="chip"></span></h2><button id="task-collapse" class="secondary" title="Collapse">▾</button></div>
+  <div class="task-head"><h2>Task <span id="task-status" class="chip"></span></h2><span class="chip done" id="dl-check" hidden>✓ downloaded</span><button id="task-collapse" class="secondary" title="Collapse">▾</button></div>
   <div id="stages" class="stages"></div>
   <pre id="task-log"></pre>
   <div class="row">

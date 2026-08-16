@@ -3,6 +3,8 @@
 Download Hugging Face models and convert them to OpenVINO (`int2` / `int3` /
 `int4` / `int8` / `nf4` / ...) through a minimal two-tab web UI.
 
+![Screenshot](docs/screenshot.png)
+
 - **Tab 1 - Download**: paste a HF link or model id (`Qwen/Qwen3.5-0.8B`),
   validate it, download into `T:\models\<org>\<model>` (HF/xet cache on `T:`).
 - **Tab 2 - Convert**: pick a model, choose a weight-compression mode (the list

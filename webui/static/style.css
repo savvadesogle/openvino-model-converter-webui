@@ -32,6 +32,7 @@ header { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
 .chip.mono { font-family: ui-monospace, Consolas, monospace; font-size: 11px; }
 .chip.busy { background: var(--peach); color: #a05a3a; }
 .chip.done { background: var(--mint); color: #2f6b4d; }
+.chip.failed { background: var(--peach); color: #a05a3a; }
 
 .paths { margin-top: 8px; font-size: 12px; color: var(--muted); }
 
@@ -73,6 +74,11 @@ input:focus, select:focus { outline: 2px solid var(--mint-2); border-color: tran
 
 .fill-link { color: #8b7fd6; text-decoration: underline dashed; text-underline-offset: 3px; cursor: pointer; font-family: inherit; }
 .fill-link:hover { text-decoration: underline; }
+
+.root-group { display: flex; }
+.root-group select { flex: 0 0 auto; width: auto; border-right: none; border-radius: 0; }
+.root-group input { flex: 1 1 auto; border-left: none; border-radius: 0; }
+.root-group select:focus, .root-group input:focus { outline: none; box-shadow: inset 0 0 0 1px var(--mint-2); }
 
 .input-group { position: relative; }
 .input-group input { padding-right: 96px; }
@@ -138,6 +144,9 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .hash-row .hstat.muted { color: var(--muted); }
 .muted { color: var(--muted); }
 
+.dir-label { color: var(--muted); }
+.dir-label[hidden] { display: none; }
+
 .dir-link { color: var(--muted); text-decoration: none; cursor: default; }
 .dir-link.active { color: #8b7fd6; text-decoration: underline dashed; text-underline-offset: 3px; cursor: pointer; }
 .dir-link.active:hover { text-decoration: underline; }
@@ -149,6 +158,9 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .banner.warn { background: #fdf6e3; border-color: #e6c76a; color: #8a6d1a; }
 .card.pending { background: #fdf9ec; border-color: #e6c76a; }
 .banner.neutral { background: var(--bg); border-color: var(--line); color: var(--muted); }
+
+#dl-hash-card { border-top: 2px dashed #c9bde6; margin-top: -14px; }
+#dl-hash-card[hidden] { display: none; }
 
 .tags { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; align-items: center; }
 .tag { background: #efeaf9; color: #5a4f86; border-radius: 999px; padding: 2px 10px; font-size: 12px; font-weight: 600; }
