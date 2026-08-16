@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OpenVINO Model Converter</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<header>
+  <div class="brand"><span class="logo">◈</span> OpenVINO Model Converter</div>
+  <div id="versions" class="chips"></div>
+</header>
+<div id="paths" class="paths mono"></div>
+
+<nav class="tabs">
+  <button class="tab active" data-panel="download">Download</button>
+  <button class="tab" data-panel="convert">Convert</button>
+</nav>
+
+<main>
+
+<!-- ============================================================ DOWNLOAD -->
+<section id="panel-download" class="panel active">
+
+  <div class="card">
+    <h2>Model <span class="help" title="Paste a Hugging Face link, a bare model id like Qwen/Qwen3.5-0.8B, or a local path. The tool validates it before downloading.">?</span></h2>
+    <p class="hint">Paste <code>https://huggingface.co/Qwen/Qwen3.5-0.8B</code> or <code>Qwen/Qwen3.5-0.8B</code> or a local path.</p>
+    <div class="row">
+      <input id="dl-text" placeholder="https://huggingface.co/org/model  |  org/model  |  local path">
+      <button id="dl-validate" class="secondary">Validate</button>
+    </div>
+    <div id="dl-info" class="info"></div>
+  </div>
+
+  <div class="card">
+    <h2>Options <span class="help" title="Revision and token are optional. Gated models need an HF token. The include filter fetches only what is needed for conversion.">?</span></h2>
+    <div class="grid">
+      <label>Revision <input id="dl-rev" placeholder="main"></label>
+      <label>HF Token <input id="dl-token" type="password" placeholder="hf_... (gated models)"></label>
+    </div>
+    <label class="check"><input id="dl-include" type="checkbox"> Only files needed for conversion (optional; full download is default)</label>
+  </div>
+
+  <div class="card">
+    <h2>Destination &amp; checks <span class="help" title="The download button stays disabled until the disk space check passes.">?</span></h2>
+    <div id="dl-dest" class="mono"></div>
+    <div id="dl-disk" class="checkline"></div>
+    <div id="dl-ram" class="checkline"></div>
+    <button id="dl-run" class="primary" disabled>Download</button>
+  </div>
+
+</section>
+
+<!-- ============================================================ CONVERT -->
+<section id="panel-convert" class="panel">
+
+  <div class="card">
+    <h2>Model <span class="help" title="Choose a locally scanned model (dense, not GGUF/quantized/OV), or paste a HF link / local path. If it is not downloaded yet, check 'Download first'.">?</span></h2>
+    <div class="row">
+      <select id="cv-model"></select>
+      <button id="cv-refresh" class="secondary">Refresh</button>
+    </div>
+    <input id="cv-text" placeholder="... or paste a HF link / local path here">
+    <div id="cv-meta" class="info"></div>
+    <label class="check"><input id="cv-download-first" type="checkbox"> Download first if not present locally</label>
+  </div>
+
+  <div class="card">
+    <h2>Task <span class="help" title="Auto-detected from config.json (vision -> image-text-to-text).">?</span></h2>
+    <div class="row">
+      <input id="cv-task" placeholder="auto">
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Weight mode <span class="help" title="Modes are loaded dynamically from the installed NNCF version. 'int2-mix' reproduces the AutoRound mixed scheme (experts int2, rest int4) and requires a MoE model.">?</span></h2>
+    <div class="row">
+      <select id="cv-mode"></select>
+      <button id="cv-selftest" class="secondary">Self-test modes</button>
+    </div>
+    <div id="cv-mode-detail" class="info"></div>
+  </div>
+
+  <div class="card">
+    <h2>Compression <span class="help" title="Group size shares one scale per group; -1 = per-channel. INT8 modes require per-channel. ratio/backup are for single-pass mixed precision.">?</span></h2>
+    <div class="grid">
+      <label>Group size <select id="cv-group"></select></label>
+      <label>Backup precision <select id="cv-backup">
+        <option value="none">none</option>
+        <option value="int8_sym">int8_sym</option>
+        <option value="int8_asym" selected>int8_asym</option>
+        <option value="fp8_e4m3">fp8_e4m3</option>
+        <option value="mxfp8_e4m3">mxfp8_e4m3</option>
+      </select></label>
+    </div>
+    <div class="grid">
+      <label>Ratio <input id="cv-ratio" type="number" step="0.1" min="0" max="1" placeholder="1.0"></label>
+      <label class="check" style="align-self:end"><input id="cv-all-layers" type="checkbox" checked> Compress all layers</label>
+    </div>
+  </div>
+
+  <details class="card">
+    <summary>Data-aware methods (optional)</summary>
+    <div class="grid">
+      <label class="check"><input id="cv-awq" type="checkbox"> AWQ</label>
+      <label class="check"><input id="cv-scale" type="checkbox"> Scale estimation</label>
+      <label class="check"><input id="cv-gptq" type="checkbox"> GPTQ</label>
+      <label class="check"><input id="cv-lora" type="checkbox"> LoRA correction</label>
+    </div>
+    <div class="grid">
+      <label>Calibration dataset (.npy) <input id="cv-dataset" placeholder="path/to/inputs.npy"></label>
+      <label>Num samples <input id="cv-nsamples" type="number" value="128"></label>
+    </div>
+  </details>
+
+  <div class="card">
+    <h2>Submodels <span class="help" title="For VLMs: compress only the language model + text embeddings and keep vision in fp16 (faster, vision is tiny).">?</span></h2>
+    <label class="check"><input id="cv-only-text" type="checkbox" checked> Compress only language_model + text_embeddings (keep vision fp16)</label>
+  </div>
+
+  <div class="card">
+    <h2>Output <span class="help" title="Result path. Name follows the HF OpenVINO convention: <Base>-<mode>-ov. '-ov' is always last.">?</span></h2>
+    <label>Output directory <input id="cv-outdir" class="mono"></label>
+    <label class="check"><input id="cv-delete-int" type="checkbox" checked> Delete intermediate fp16 export after conversion</label>
+    <label class="check"><input id="cv-genai" type="checkbox" checked> Run GenAI end-to-end test after conversion</label>
+  </div>
+
+  <div class="card">
+    <h2>Checks &amp; Run <span class="help" title="Buttons are disabled until disk and virtual-memory checks pass.">?</span></h2>
+    <div id="cv-disk" class="checkline"></div>
+    <div id="cv-ram" class="checkline"></div>
+    <div id="cv-errors" class="errors"></div>
+    <button id="cv-run" class="primary" disabled>Convert</button>
+  </div>
+
+</section>
+
+</main>
+
+<!-- ============================================================ TASK -->
+<section id="task-panel" class="card task">
+  <h2>Task <span id="task-status" class="chip"></span></h2>
+  <div id="stages" class="stages"></div>
+  <pre id="task-log"></pre>
+  <div class="row">
+    <button id="task-cancel" class="danger">Cancel</button>
+    <button id="task-clear" class="secondary">Clear</button>
+  </div>
+</section>
+
+<footer class="mono">Cache: T:\models\.hf-cache &nbsp;·&nbsp; Originals: T:\models\&lt;org&gt;\&lt;model&gt; &nbsp;·&nbsp; Output: T:\models\savvadesogle\&lt;Base&gt;-&lt;mode&gt;-ov</footer>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

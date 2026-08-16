@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "openvino-model-converter-webui"
+version = "0.1.0"
+description = "Download HF models and convert them to OpenVINO INT2/INT3/INT4 with a web UI"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Apache-2.0" }
+
+[project.scripts]
+ov-converter = "ov_converter.cli:main"
+
+[tool.setuptools]
+packages = ["ov_converter", "webui"]
