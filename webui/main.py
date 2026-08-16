@@ -203,8 +203,13 @@ def api_mkdir(body: MkdirIn):
 
 @app.post("/api/model/verify-hash")
 def api_verify_hash(body: VerifyHashIn):
-    from ov_converter.hf import verify_hashes
-    return verify_hashes(body.path, body.files)
+    from ov_converter.hf import verify_hashes_stream
+
+    def event_gen():
+        for ev in verify_hashes_stream(body.path, body.files):
+            yield json.dumps(ev) + "\n"
+
+    return StreamingResponse(event_gen(), media_type="application/x-ndjson")
 
 
 @app.get("/api/disk")

@@ -5,7 +5,7 @@ const $ = (id) => document.getElementById(id);
 const state = {
   info: null, modes: [], sources: [], converted: [],
   dlInfo: null, cvInfo: null, currentMode: null, currentTask: null,
-  taskActive: false, dlFiles: null, dlSelected: null, dlLocalComplete: null,
+  taskActive: false, taskKind: null, dlFiles: null, dlSelected: null, dlLocalComplete: null,
 };
 let activeProgressId = null;
 let dlLocalDebounce = null;
@@ -91,6 +91,7 @@ async function loadModels() {
 async function validateHfEnv() {
   const res = $("hf-env-res");
   if (!res) return;
+  document.querySelectorAll(".create-btn").forEach((b) => b.remove());
   const paths = { "HF_HOME": $("hf-home").value.trim(), "HF_HUB_CACHE": $("hf-hub-cache").value.trim() };
   const bad = Object.entries(paths).find(([, v]) => v === "" || !/^[A-Za-z]:[\\/]/.test(v));
   if (bad) {
@@ -102,8 +103,10 @@ async function validateHfEnv() {
     const entries = Object.entries(paths);
     const results = await Promise.all(entries.map(([, p]) => api("/api/disk?path=" + encodeURIComponent(p))));
     const driveOf = (p) => (String(p).match(/^([A-Za-z]):/) || [])[1] || "?";
+    let driveInvalid = false;
+    let anyMissing = false;
     for (let idx = 0; idx < entries.length; idx++) {
-      const p = entries[idx][1];
+      const [key, p] = entries[idx];
       const r = results[idx];
       if (r.ok === false) {
         let driveOk = false;
@@ -111,26 +114,35 @@ async function validateHfEnv() {
         if (drive !== "?") {
           try { driveOk = (await api("/api/disk?path=" + encodeURIComponent(drive + ":\\"))).ok === true; } catch (e) {}
         }
-        if (!driveOk) {
-          res.className = "banner show bad";
-          res.textContent = "Insufficient disk (invalid drive)";
-          return;
+        if (!driveOk) { driveInvalid = true; continue; }
+        anyMissing = true;
+        const input = document.getElementById(key === "HF_HOME" ? "hf-home" : "hf-hub-cache");
+        const group = input ? input.closest(".input-group") : null;
+        if (group && !group.querySelector(".create-btn")) {
+          const create = el("button", "create-btn", "Create now?");
+          create.id = key === "HF_HOME" ? "create-btn-hf-home" : "create-btn-hf-hub-cache";
+          create.onclick = async () => {
+            try {
+              await api("/api/mkdir", { method: "POST", body: JSON.stringify({ path: p }) });
+              create.remove();
+              validateHfEnv();
+            } catch (e2) {
+              res.textContent = "Create failed: " + e2.message;
+            }
+          };
+          group.appendChild(create);
         }
-        res.className = "banner show bad";
-        res.textContent = "Directory does not exist: " + p;
-        const create = el("button", "btn btn-small", "Create");
-        create.id = "hf-create";
-        create.onclick = async () => {
-          try {
-            await api("/api/mkdir", { method: "POST", body: JSON.stringify({ path: p }) });
-            validateHfEnv();
-          } catch (e2) {
-            res.textContent = "Create failed: " + e2.message;
-          }
-        };
-        res.appendChild(create);
-        return;
       }
+    }
+    if (driveInvalid) {
+      res.className = "banner show bad";
+      res.textContent = "Insufficient disk (invalid drive)";
+      return;
+    }
+    if (anyMissing) {
+      res.className = "banner show bad";
+      res.textContent = 'Missing folder(s) — use "Create now?"';
+      return;
     }
     const free = Math.min(...results.map((r) => Number(r.free_gb) || 0));
     if (free < 10) {
@@ -165,13 +177,9 @@ function bindEvents() {
   }
   $("dl-validate").addEventListener("click", validateDownload);
   $("dl-run").addEventListener("click", runDownload);
-  const tagsEl = $("dl-tags");
-  if (tagsEl) tagsEl.addEventListener("click", (e) => {
+  document.addEventListener("click", (e) => {
     const t = e.target && e.target.closest ? e.target.closest("[data-fill]") : null;
-    if (t && t.dataset.fill) {
-      $("dl-text").value = t.dataset.fill;
-      validateDownload();
-    }
+    if (t && t.dataset.fill) { $("dl-text").value = t.dataset.fill; validateDownload(); }
   });
   const onDestInput = () => {
     clearTimeout(dlLocalDebounce);
@@ -498,29 +506,86 @@ async function verifyHashes() {
   const filesMeta = (state.dlInfo && state.dlInfo.info.files_meta) || [];
   btn.disabled = true;
   spin.hidden = false;
-  box.textContent = "Verifying hashes…";
   box.className = "checkline";
+  box.innerHTML = "";
+  const pct = el("div", null, "Verifying hashes… 0%");
+  pct.id = "hash-pct";
+  box.appendChild(pct);
+  const list = el("div", null, "");
+  list.id = "hash-list";
+  filesMeta.forEach((f, i) => {
+    const row = el("div", "hash-row", "");
+    row.id = "hash-" + i;
+    row.appendChild(el("span", "hname", f.name));
+    row.appendChild(el("span", "hstat", "…"));
+    list.appendChild(row);
+  });
+  box.appendChild(list);
   try {
-    const r = await api("/api/model/verify-hash", { method: "POST", body: JSON.stringify({ path: composeDest(), files: filesMeta }) });
-    const results = r.results || [];
-    const lines = [];
-    for (const x of results) {
-      if (x.present === true && x.ok === true) {
-        lines.push(esc(x.name) + " — ok (ref sha256: " + short(x.sha) + ")");
-      } else if (x.present === true && x.ok === false) {
-        lines.push(esc(x.name) + " — MISMATCH");
-      } else {
-        lines.push(esc(x.name) + " — not present");
+    const resp = await fetch("/api/model/verify-hash", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path: composeDest(), files: filesMeta }),
+    });
+    if (!resp.ok || !resp.body) {
+      let msg = resp.statusText;
+      try { msg = (await resp.text()) || msg; } catch (e) {}
+      throw new Error(msg);
+    }
+    const reader = resp.body.getReader();
+    const dec = new TextDecoder();
+    let buffer = "";
+    let total = 0;
+    let okCount = 0;
+    let issuesCount = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += dec.decode(value, { stream: true });
+      const parts = buffer.split("\n");
+      buffer = parts.pop();
+      for (const line of parts) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        let obj;
+        try { obj = JSON.parse(trimmed); } catch (e) { continue; }
+        if (obj.event === "start") {
+          total = obj.total || 0;
+          pct.textContent = "Verifying hashes… 0%";
+        } else if (obj.event === "file") {
+          const r = obj.result || {};
+          const name = obj.name || "";
+          const row = document.getElementById("hash-" + obj.index);
+          const stat = row ? row.querySelector(".hstat") : null;
+          if (r.present === true && r.ok === true) {
+            if (stat) { stat.textContent = "✓ ok (ref: " + short(r.expected || "") + ")"; stat.className = "hstat ok"; }
+          } else if (r.present === true && r.ok === false) {
+            if (stat) { stat.textContent = "✕ MISMATCH"; stat.className = "hstat bad"; }
+          } else if (r.present === true && r.ok == null) {
+            if (stat) { stat.textContent = "no ref (not LFS)"; stat.className = "hstat muted"; }
+          } else {
+            if (stat) { stat.textContent = "not present"; stat.className = "hstat bad"; }
+          }
+          if (r.present === true && r.ok === true) okCount++;
+          else if ((r.present === true && r.ok === false) || r.present === false) issuesCount++;
+          const t = obj.total || total;
+          if (t > 0) pct.textContent = "Verifying hashes… " + Math.round(((obj.index + 1) / t) * 100) + "%";
+        } else if (obj.event === "done") {
+          if (issuesCount === 0) {
+            box.className = "checkline ok";
+            pct.textContent = "Hashes verified (" + okCount + " files OK)";
+          } else {
+            box.className = "checkline bad";
+            pct.textContent = "Issues found (" + issuesCount + ")";
+          }
+          appendLog(pct.textContent);
+          document.querySelectorAll("#hash-list .hash-row").forEach((row) => {
+            const st = row.querySelector(".hstat");
+            if (st && st.textContent !== "…") appendLog(st.textContent);
+          });
+        }
       }
     }
-    const corrupt = results.filter((x) => !(x.present === true && x.ok === true)).length;
-    const header = corrupt === 0
-      ? "Hashes verified (" + results.length + " files)"
-      : "Corrupt / missing (" + corrupt + ")";
-    box.className = "checkline " + (corrupt === 0 ? "ok" : "bad");
-    box.innerHTML = header + "<br>" + lines.join("<br>");
-    appendLog(header);
-    lines.forEach((l) => appendLog(l));
   } catch (e) {
     box.className = "checkline bad";
     box.textContent = "Verify hashes error: " + e.message;
@@ -749,21 +814,9 @@ function parseEvent(line) {
   if (!m) return null;
   return { ev: m[1], stage: m[2], payload: m[3] };
 }
-async function startTask(kind, body, url) {
-  let id;
-  try {
-    id = (await api(url, { method: "POST", body: JSON.stringify(body) })).task_id;
-  } catch (e) { appendLog("ERROR: " + e.message); return; }
-  state.currentTask = id;
-  renderStages(kind);
-  $("task-panel").classList.remove("collapsed");
-  $("task-collapse").textContent = "▴";
-  $("task-collapse").title = "Collapse";
-  appendLog("task started: " + id + " (" + kind + ")");
-  appendLog("\n— task " + id + " (" + kind + ") —");
-  $("task-status").textContent = "running";
-  $("task-status").className = "chip busy";
+function setTaskBusy(kind) {
   state.taskActive = true;
+  state.taskKind = kind;
   $("task-cancel").disabled = false;
   const isDl = kind === "download";
   $("dl-spinner").hidden = !isDl;
@@ -777,22 +830,41 @@ async function startTask(kind, body, url) {
     bar.querySelector(".fill").style.width = "0%";
     bar.classList.toggle("indeterminate", id === activeProgressId);
   });
+}
+async function startTask(kind, body, url) {
+  setTaskBusy(kind);
+  let id;
+  try {
+    id = (await api(url, { method: "POST", body: JSON.stringify(body) })).task_id;
+  } catch (e) { appendLog("ERROR: " + e.message); resetTaskUi(); return; }
+  state.currentTask = id;
+  renderStages(kind);
+  $("task-panel").classList.remove("collapsed");
+  $("task-collapse").textContent = "▴";
+  $("task-collapse").title = "Collapse";
+  appendLog("task started: " + id + " (" + kind + ")");
+  appendLog("\n— task " + id + " (" + kind + ") —");
+  $("task-status").textContent = "running";
+  $("task-status").className = "chip busy";
   const es = new EventSource("/api/task/stream?task_id=" + id);
   es.onmessage = (e) => {
     try { const d = JSON.parse(e.data); onTaskLine(d.line); } catch (err) { appendLog(e.data); }
   };
-  es.addEventListener("done", (e) => {
+  es.addEventListener("done", async (e) => {
     es.close();
     try { const d = JSON.parse(e.data); $("task-status").textContent = d.returncode === 0 ? "completed" : "failed (exit " + d.returncode + ")"; }
     catch (err) { $("task-status").textContent = "done"; }
     $("task-status").className = "chip done";
+    const wasDl = state.taskKind === "download";
     resetTaskUi();
+    if (wasDl) { await updateLocalStatus(); updateDlChecks(); }
     loadModels(); loadInfo();
   });
   es.onerror = () => { es.close(); $("task-status").textContent = "stream closed"; $("task-status").className = "chip"; resetTaskUi(); };
 }
 function resetTaskUi() {
   state.taskActive = false;
+  state.taskKind = null;
   $("task-cancel").disabled = true;
   activeProgressId = null;
   $("dl-spinner").hidden = true;

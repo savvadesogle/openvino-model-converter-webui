@@ -27,7 +27,7 @@
 
   <div class="card">
     <h2>Model</h2>
-    <p class="desc">Paste a Hugging Face link, a bare model id like <code>Qwen/Qwen3.5-0.8B</code>, or a local path. The tool validates it before downloading.</p>
+    <p class="desc">Paste a Hugging Face link, a bare model id like <code class="fill-link" data-fill="Qwen/Qwen3.5-0.8B">Qwen/Qwen3.5-0.8B</code>, or a local path. The tool validates it before downloading.</p>
     <div class="row">
       <input id="dl-text" placeholder="https://huggingface.co/org/model  |  org/model  |  local path">
       <button id="dl-validate" class="secondary">Validate</button>
@@ -48,8 +48,8 @@
     <h3>Cache environment</h3>
     <p class="desc">Where Hugging Face stores downloaded/cache data. Create the folder if missing (the UI will offer this).</p>
     <div class="grid">
-      <label>HF_HOME <input id="hf-home" class="mono" placeholder="T:\models\.hf-cache"></label>
-      <label>HF_HUB_CACHE <input id="hf-hub-cache" class="mono" placeholder="T:\models\.hf-cache\hub"></label>
+      <label>HF_HOME <div class="input-group"><input id="hf-home" class="mono" placeholder="T:\models\.hf-cache"></div></label>
+      <label>HF_HUB_CACHE <div class="input-group"><input id="hf-hub-cache" class="mono" placeholder="T:\models\.hf-cache\hub"></div></label>
     </div>
     <div id="hf-env-res" class="checkline"></div>
   </div>

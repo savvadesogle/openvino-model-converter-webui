@@ -6,7 +6,7 @@ import os
 import re
 import shutil
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Iterator
 
 import ov_converter.settings as S
 
@@ -206,10 +206,32 @@ def local_check(path: str | Path, files: list[str]) -> dict:
     }
 
 
-def verify_hashes(path: str | Path, files: list[dict]) -> dict:
-    """Verify local files against server-provided sha256 digests."""
+def _verify_one(d: Path, name: str, sha256: str | None) -> dict:
+    """Verify a single local file against its server-provided sha256."""
     import hashlib
 
+    f = d / name
+    if not f.is_file():
+        return {"name": name, "present": False, "ok": None,
+                "error": "not present locally"}
+    if not sha256:
+        return {"name": name, "present": True, "ok": None,
+                "error": "no sha256 on server (not LFS)"}
+    h = hashlib.sha256()
+    with open(f, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            h.update(chunk)
+    actual = h.hexdigest()
+    ok = actual == sha256.lower()
+    result = {"name": name, "present": True, "ok": ok,
+              "expected": sha256, "actual": actual}
+    if not ok:
+        result["error"] = "hash mismatch"
+    return result
+
+
+def verify_hashes(path: str | Path, files: list[dict]) -> dict:
+    """Verify local files against server-provided sha256 digests."""
     d = Path(path)
     results = []
     checked = 0
@@ -217,37 +239,44 @@ def verify_hashes(path: str | Path, files: list[dict]) -> dict:
     corrupt_count = 0
     skipped = 0
     for item in files:
-        name = item["name"]
-        sha256 = item.get("sha256")
-        f = d / name
-        if not f.is_file():
-            results.append({"name": name, "present": False, "ok": None,
-                            "error": "not present locally"})
-            skipped += 1
-            continue
-        if not sha256:
-            results.append({"name": name, "present": True, "ok": None,
-                            "error": "no sha256 on server (not LFS)"})
-            skipped += 1
-            continue
-        h = hashlib.sha256()
-        with open(f, "rb") as fh:
-            for chunk in iter(lambda: fh.read(1 << 20), b""):
-                h.update(chunk)
-        actual = h.hexdigest()
-        ok = actual == sha256.lower()
-        checked += 1
-        if ok:
-            ok_count += 1
-        else:
-            corrupt_count += 1
-        result = {"name": name, "present": True, "ok": ok,
-                  "expected": sha256, "actual": actual}
-        if not ok:
-            result["error"] = "hash mismatch"
+        result = _verify_one(d, item["name"], item.get("sha256"))
         results.append(result)
+        if not result["present"] or result["ok"] is None:
+            skipped += 1
+        else:
+            checked += 1
+            if result["ok"]:
+                ok_count += 1
+            else:
+                corrupt_count += 1
     return {"results": results, "checked": checked, "ok_count": ok_count,
             "corrupt_count": corrupt_count, "skipped": skipped}
+
+
+def verify_hashes_stream(path: str | Path, files: list[dict]) -> Iterator[dict]:
+    """Verify local files against server-provided sha256 digests, streaming progress events."""
+    d = Path(path)
+    total = len(files)
+    yield {"event": "start", "total": total}
+    checked = 0
+    ok_count = 0
+    corrupt_count = 0
+    skipped = 0
+    for i, item in enumerate(files):
+        result = _verify_one(d, item["name"], item.get("sha256"))
+        yield {"event": "file", "index": i, "total": total,
+               "name": result["name"], "result": result}
+        if not result["present"] or result["ok"] is None:
+            skipped += 1
+        else:
+            checked += 1
+            if result["ok"]:
+                ok_count += 1
+            else:
+                corrupt_count += 1
+    yield {"event": "done",
+           "summary": {"checked": checked, "ok_count": ok_count,
+                       "corrupt_count": corrupt_count, "skipped": skipped}}
 
 
 def download(model_id: str, dest: str | Path, *, revision: str | None = None,
