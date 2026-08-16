@@ -405,7 +405,7 @@ function updateDirLink() {
   const show = !!(state.dlInfo && state.dlInfo.kind === "hf");
   const active = show && state.dlLocalExists === true;
   link.hidden = !show;
-  link.textContent = show ? composeDest() : "";
+  link.textContent = show ? composeDest() + (active ? "" : "  (folder not found)") : "";
   link.classList.toggle("active", active);
   link.style.pointerEvents = active ? "auto" : "none";
 }
@@ -557,12 +557,18 @@ async function verifyHashes() {
           const name = obj.name || "";
           const row = document.getElementById("hash-" + obj.index);
           const stat = row ? row.querySelector(".hstat") : null;
-          if (r.present === true && r.ok === true) {
-            if (stat) { stat.textContent = "✓ ok (ref: " + short(r.expected || "") + ")"; stat.className = "hstat ok"; }
-          } else if (r.present === true && r.ok === false) {
+          if (r.present === false) {
+            if (stat) { stat.textContent = "not present"; stat.className = "hstat bad"; }
+          } else if (r.present === true && r.ok === true && r.method === "sha256") {
+            if (stat) { stat.textContent = "✓ ok (ref sha256: " + short(r.expected) + ")"; stat.className = "hstat ok"; }
+          } else if (r.present === true && r.ok === true && r.method === "size") {
+            if (stat) { stat.textContent = "✓ ok (size " + humanSize(r.actual) + ")"; stat.className = "hstat ok"; }
+          } else if (r.present === true && r.ok === false && r.method === "sha256") {
             if (stat) { stat.textContent = "✕ MISMATCH"; stat.className = "hstat bad"; }
+          } else if (r.present === true && r.ok === false && r.method === "size") {
+            if (stat) { stat.textContent = "✕ size mismatch"; stat.className = "hstat bad"; }
           } else if (r.present === true && r.ok == null) {
-            if (stat) { stat.textContent = "no ref (not LFS)"; stat.className = "hstat muted"; }
+            if (stat) { stat.textContent = "no reference (not LFS)"; stat.className = "hstat muted"; }
           } else {
             if (stat) { stat.textContent = "not present"; stat.className = "hstat bad"; }
           }
