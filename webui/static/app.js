@@ -5,7 +5,9 @@ const $ = (id) => document.getElementById(id);
 const state = {
   info: null, modes: [], sources: [], converted: [],
   dlInfo: null, cvInfo: null, currentMode: null, currentTask: null,
+  taskActive: false,
 };
+let activeProgressId = null;
 
 /* ---------------------------------------------------------------- helpers */
 function el(tag, cls, text) {
@@ -68,6 +70,10 @@ function bindEvents() {
   $("cv-run").addEventListener("click", runConvert);
   $("task-cancel").addEventListener("click", () => api("/api/task/cancel", { method: "POST" }).catch(() => {}));
   $("task-clear").addEventListener("click", () => { $("task-log").innerHTML = ""; $("stages").innerHTML = ""; });
+  $("task-collapse").addEventListener("click", () => {
+    $("task-panel").classList.toggle("collapsed");
+    $("task-collapse").textContent = $("task-panel").classList.contains("collapsed") ? "▴" : "▾";
+  });
 }
 
 /* ---------------------------------------------------------------- Download tab */
@@ -320,7 +326,7 @@ function bindTaskStream() {
 function renderStages(kind) {
   const box = $("stages");
   box.innerHTML = "";
-  const list = kind === "download" ? ["validate", "download"] : STAGES;
+  const list = STAGES;
   for (const s of list) {
     const n = el("div", "stage", "");
     n.dataset.stage = s;
@@ -366,10 +372,20 @@ async function startTask(kind, body, url) {
   } catch (e) { appendLog("ERROR: " + e.message); return; }
   state.currentTask = id;
   renderStages(kind);
+  $("task-panel").classList.remove("collapsed");
+  $("task-collapse").textContent = "▾";
   appendLog("task started: " + id + " (" + kind + ")");
   $("task-status").textContent = "running";
   $("task-status").className = "chip busy";
   $("task-log").innerHTML = "";
+  state.taskActive = true;
+  ["dl-run", "cv-run"].forEach((b) => { const el = $(b); el.disabled = true; el.classList.add("working"); });
+  activeProgressId = kind === "download" ? "dl-progress" : "cv-progress";
+  ["dl-progress", "cv-progress"].forEach((id) => {
+    const bar = $(id);
+    bar.querySelector(".fill").style.width = "0%";
+    bar.classList.toggle("indeterminate", id === activeProgressId);
+  });
   const es = new EventSource("/api/task/stream?task_id=" + id);
   es.onmessage = (e) => {
     try { const d = JSON.parse(e.data); onTaskLine(d.line); } catch (err) { appendLog(e.data); }
@@ -379,9 +395,20 @@ async function startTask(kind, body, url) {
     try { const d = JSON.parse(e.data); $("task-status").textContent = "done rc=" + d.returncode; }
     catch (err) { $("task-status").textContent = "done"; }
     $("task-status").className = "chip done";
+    resetTaskUi();
     loadModels(); loadInfo();
   });
-  es.onerror = () => { es.close(); $("task-status").textContent = "stream closed"; $("task-status").className = "chip"; };
+  es.onerror = () => { es.close(); $("task-status").textContent = "stream closed"; $("task-status").className = "chip"; resetTaskUi(); };
+}
+function resetTaskUi() {
+  state.taskActive = false;
+  activeProgressId = null;
+  ["dl-run", "cv-run"].forEach((b) => { const el = $(b); el.disabled = false; el.classList.remove("working"); });
+  ["dl-progress", "cv-progress"].forEach((id) => {
+    const bar = $(id);
+    bar.classList.remove("indeterminate");
+    bar.querySelector(".fill").style.width = "0%";
+  });
 }
 function onTaskLine(line) {
   if (line == null) return;
@@ -394,6 +421,15 @@ function onTaskLine(line) {
       else { setStage(ev.stage, "running"); appendLog("▶ " + ev.stage); }
     } else if (ev.ev === "LOG") {
       appendLog(ev.payload);
+    } else if (ev.ev === "PROGRESS") {
+      const pct = parseFloat(ev.payload);
+      if (activeProgressId) {
+        const el = document.getElementById(activeProgressId);
+        if (el) {
+          el.classList.remove("indeterminate");
+          el.querySelector(".fill").style.width = Math.max(0, Math.min(100, pct)) + "%";
+        }
+      }
     } else if (ev.ev === "META") {
       try {
         const r = JSON.parse(ev.payload);

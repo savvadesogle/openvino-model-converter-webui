@@ -129,7 +129,8 @@ def run(cfg: ConvertConfig, emit: Emitter | None = None) -> dict:
         try:
             rc = hf.download(mid, dest, revision=cfg.revision, token=cfg.token,
                              include_only=cfg.include_only,
-                             log=lambda t: emit.log(t, "download"))
+                             log=lambda t: emit.log(t, "download"),
+                             progress=lambda p: emit.emit("PROGRESS", "download", f"{p:.0f}"))
             if rc != 0:
                 raise RuntimeError(f"hf download exited with code {rc}")
             src = dest

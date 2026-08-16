@@ -1,6 +1,7 @@
-"""HF link parsing, validation and download (snapshot_download)."""
+"""HF link parsing, validation and download."""
 from __future__ import annotations
 
+import fnmatch
 import os
 import re
 from pathlib import Path
@@ -127,9 +128,10 @@ def detect_local(model_dir: str | Path) -> dict:
 
 def download(model_id: str, dest: str | Path, *, revision: str | None = None,
              token: str | None = None, include_only: bool = False,
-             log: Callable[[str], None] | None = None) -> int:
-    """Download a HF repo in-process via snapshot_download; 0 on success, 1 on failure."""
-    from huggingface_hub import snapshot_download
+             log: Callable[[str], None] | None = None,
+             progress: Callable[[float], None] | None = None) -> int:
+    """Download a HF repo in-process, file by file; 0 on success, 1 on failure."""
+    from huggingface_hub import HfApi, hf_hub_download
 
     S.ensure_dirs()
     S.apply_env()
@@ -137,7 +139,7 @@ def download(model_id: str, dest: str | Path, *, revision: str | None = None,
     token = (token or os.environ.get("HF_TOKEN") or "").strip() or None
     dest = Path(dest)
     dest.mkdir(parents=True, exist_ok=True)
-    allow_patterns = CONVERT_INCLUDE if include_only else None
+    api = HfApi(token=token)
 
     def emit(line: str) -> None:
         if log:
@@ -145,17 +147,18 @@ def download(model_id: str, dest: str | Path, *, revision: str | None = None,
 
     try:
         emit(f"Downloading {model_id} -> {dest}")
-        snapshot_download(
-            repo_id=model_id,
-            local_dir=str(dest),
-            revision=revision or None,
-            token=token or None,
-            allow_patterns=allow_patterns,
-            max_workers=8,
-        )
-        files = [p for p in dest.rglob("*") if p.is_file() and ".cache" not in p.parts]
-        for f in files:
-            emit(f"Downloading {f.name} ...")
+        files = [f.rfilename for f in api.list_repo_tree(
+            model_id, revision=(revision or "main"), recursive=True, expand=True)
+            if f.type == "file"]
+        if include_only:
+            files = [n for n in files
+                     if any(fnmatch.fnmatch(n, pat) for pat in CONVERT_INCLUDE)]
+        for i, name in enumerate(files):
+            hf_hub_download(repo_id=model_id, filename=name, local_dir=str(dest),
+                            revision=revision or None, token=token or None)
+            emit(f"Downloading {name} ...")
+            if progress:
+                progress((i + 1) / len(files) * 100)
         emit(f"Downloaded {len(files)} files to {dest}")
         return 0
     except Exception as e:  # noqa: BLE001
