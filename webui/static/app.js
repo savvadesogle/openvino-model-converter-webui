@@ -157,7 +157,7 @@ async function validateDownload() {
       setStage("validate", "done");
       $("task-status").textContent = "validated";
       $("task-status").className = "chip done";
-      appendLog(`validate: ${res.info.id} (${res.info.total_gb} GB, ${res.info.files} files)`);
+      appendLog(`validate: ${res.info.id} (${res.info.total_gb} GB, ${(res.info.files || []).length} files)`);
       if (res.info.local_complete) appendLog("already downloaded locally: " + res.info.local_dir);
       if (res.info.local_exists && !res.info.local_complete) appendLog("local copy exists but incomplete (missing: " + res.info.local_missing.length + " files)");
     } else {

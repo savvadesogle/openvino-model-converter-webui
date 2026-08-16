@@ -174,11 +174,21 @@ def local_check(path: str | Path, files: list[str]) -> dict:
     local_names = set()
     if d.is_dir():
         for p in d.rglob("*"):
-            if p.is_file():
-                rel = p.relative_to(d)
-                if any(part.startswith(".") for part in rel.parts):
-                    continue
-                local_names.add(rel.as_posix())
+            if not p.is_file():
+                continue
+            rel = p.relative_to(d)
+            # skip files living inside dot-DIRECTORIES (e.g. .cache, .git),
+            # but keep dot-FILES such as .gitattributes / .gitignore
+            skip = False
+            for i, part in enumerate(rel.parts):
+                if part.startswith("."):
+                    node = d.joinpath(*rel.parts[: i + 1])
+                    if node.is_dir():
+                        skip = True
+                        break
+            if skip:
+                continue
+            local_names.add(rel.as_posix())
     missing = [n for n in files if n not in local_names]
     present_files = [n for n in files if n in local_names]
     return {
