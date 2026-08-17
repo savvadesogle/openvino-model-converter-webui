@@ -49,17 +49,37 @@ def model_dir(model_id: str) -> Path:
     return originals_dir(org or "models") / name
 
 
-_PY_QUERY = (
-    "import importlib.util as u, importlib.metadata as m, re;"
-    "import sys;"
-    "ok = all(u.find_spec(x) is not None for x in ('openvino', 'nncf', 'optimum', 'transformers'));"
-    "try:"
-    "    mm = re.match(r'(\\d+)\\.(\\d+)', m.version('transformers'));"
-    "    ok = ok and mm is not None and (int(mm.group(1)), int(mm.group(2))) >= (4, 51);"
-    "except Exception:"
-    "    ok = False;"
-    "sys.exit(0 if ok else 1)"
-)
+_PY_QUERY = "\n".join([
+    "import importlib.util as u, importlib.metadata as m, re",
+    "import sys",
+    "",
+    "def _num(v):",
+    "    _mm = re.findall(r'\\d+', v or '')",
+    "    return tuple(int(x) for x in _mm[:3])",
+    "",
+    "ok = all(u.find_spec(x) is not None for x in ('openvino', 'nncf', 'optimum', 'transformers'))",
+    "if ok:",
+    "    try:",
+    "        ok = _num(m.version('nncf')) >= (3, 3, 0)",
+    "    except Exception:",
+    "        ok = False",
+    "if ok:",
+    "    try:",
+    "        ok = _num(m.version('optimum')) >= (2, 3, 0)",
+    "    except Exception:",
+    "        ok = False",
+    "if ok:",
+    "    try:",
+    "        ok = _num(m.version('transformers')) >= (4, 51)",
+    "    except Exception:",
+    "        ok = False",
+    "if ok:",
+    "    try:",
+    "        m.version('optimum-intel')",
+    "    except Exception:",
+    "        ok = False",
+    "sys.exit(0 if ok else 1)",
+])
 
 _resolved_python: str | None = None
 

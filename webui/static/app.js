@@ -78,9 +78,10 @@ async function loadInfo() {
   $("hf-base").value = "";
   const chips = $("versions");
   chips.innerHTML = "";
-  for (const [k, v] of Object.entries(state.info.versions)) {
-    if (v == null) continue;
-    chips.appendChild(el("span", "chip mono", `${k}=${v}`));
+  const v = state.info.resolved_versions && Object.keys(state.info.resolved_versions).length ? state.info.resolved_versions : state.info.versions;
+  for (const [k, val] of Object.entries(v)) {
+    if (val == null) continue;
+    chips.appendChild(el("span", "chip mono", `${k}=${val}`));
   }
 }
 async function loadModes() {
@@ -939,6 +940,7 @@ async function verifyHashes() {
     list.appendChild(row);
   });
   box.appendChild(list);
+  let sawDone = false;
   try {
     const resp = await fetch("/api/model/verify-hash", {
       method: "POST",
@@ -995,6 +997,7 @@ async function verifyHashes() {
           const t = obj.total || total;
           if (t > 0) pct.textContent = "Verifying hashes… " + Math.round(((obj.index + 1) / t) * 100) + "%";
         } else if (obj.event === "done") {
+          sawDone = true;
           if (issuesCount === 0) {
             box.className = "checkline ok";
             pct.textContent = "Hashes verified (" + okCount + " files OK)";
@@ -1010,13 +1013,19 @@ async function verifyHashes() {
         }
       }
     }
+    if (!sawDone) {
+      box.className = "checkline bad";
+      pct.textContent = "Verifying hashes… stream ended unexpectedly (" + okCount + " ok, " + issuesCount + " issues) — try again";
+      appendLog("verify hashes: stream ended before completion");
+    }
   } catch (e) {
     box.className = "checkline bad";
     box.textContent = "Verify hashes error: " + e.message;
     appendLog("verify hashes error: " + e.message);
+  } finally {
+    btn.disabled = false;
+    spin.hidden = true;
   }
-  btn.disabled = false;
-  spin.hidden = true;
 }
 
 /* ---------------------------------------------------------------- Convert tab */

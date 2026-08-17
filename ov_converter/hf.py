@@ -266,40 +266,49 @@ def local_check(path: str | Path, files: list[str]) -> dict:
     }
 
 
-def _verify_one(d: Path, name: str, sha256: str | None,
+def _verify_one(d: Path, name: str | None, sha256: str | None,
                 expected_size: int | None = None) -> dict:
     """Verify a single local file against its server-provided sha256 / size."""
     import hashlib
 
-    f = d / name
-    if not f.is_file():
+    if not name:
         return {"name": name, "present": False, "ok": None,
                 "method": None, "expected": None, "actual": None,
-                "error": "not present locally"}
-    if sha256:
-        h = hashlib.sha256()
-        with open(f, "rb") as fh:
-            for chunk in iter(lambda: fh.read(1 << 20), b""):
-                h.update(chunk)
-        actual = h.hexdigest()
-        ok = actual == sha256.lower()
-        result = {"name": name, "present": True, "ok": ok, "method": "sha256",
-                  "expected": sha256, "actual": actual}
-        if not ok:
-            result["error"] = "hash mismatch"
-        return result
-    if expected_size is not None:
-        actual_size = f.stat().st_size
-        ok = actual_size == expected_size
-        result = {"name": name, "present": True, "ok": ok, "method": "size",
-                  "expected": expected_size, "actual": actual_size,
-                  "expected_size": expected_size, "actual_size": actual_size}
-        if not ok:
-            result["error"] = "size mismatch"
-        return result
-    return {"name": name, "present": True, "ok": None,
-            "method": None, "expected": None, "actual": None,
-            "error": "no reference (not LFS)"}
+                "error": "no file name"}
+    try:
+        f = d / name
+        if not f.is_file():
+            return {"name": name, "present": False, "ok": None,
+                    "method": None, "expected": None, "actual": None,
+                    "error": "not present locally"}
+        if sha256:
+            h = hashlib.sha256()
+            with open(f, "rb") as fh:
+                for chunk in iter(lambda: fh.read(1 << 20), b""):
+                    h.update(chunk)
+            actual = h.hexdigest()
+            ok = actual == sha256.lower()
+            result = {"name": name, "present": True, "ok": ok, "method": "sha256",
+                      "expected": sha256, "actual": actual}
+            if not ok:
+                result["error"] = "hash mismatch"
+            return result
+        if expected_size is not None:
+            actual_size = f.stat().st_size
+            ok = actual_size == expected_size
+            result = {"name": name, "present": True, "ok": ok, "method": "size",
+                      "expected": expected_size, "actual": actual_size,
+                      "expected_size": expected_size, "actual_size": actual_size}
+            if not ok:
+                result["error"] = "size mismatch"
+            return result
+        return {"name": name, "present": True, "ok": None,
+                "method": None, "expected": None, "actual": None,
+                "error": "no reference (not LFS)"}
+    except Exception as e:  # noqa: BLE001
+        return {"name": name, "present": False, "ok": None,
+                "method": None, "expected": None, "actual": None,
+                "error": f"read error: {str(e)[:120]}"}
 
 
 def verify_hashes(path: str | Path, files: list[dict]) -> dict:
@@ -334,31 +343,38 @@ def verify_hashes_stream(path: str | Path, files: list[dict]) -> Iterator[dict]:
     """Verify local files against server-provided sha256 digests / sizes, streaming progress events."""
     d = Path(path)
     total = len(files)
-    yield {"event": "start", "total": total}
     checked = 0
     ok_count = 0
     corrupt_count = 0
     skipped = 0
     no_ref = 0
-    for i, item in enumerate(files):
-        result = _verify_one(d, item["name"], item.get("sha256"),
-                             item.get("size"))
-        yield {"event": "file", "index": i, "total": total,
-               "name": result["name"], "result": result}
-        if not result["present"] or result["ok"] is None:
-            skipped += 1
-            if result["present"]:
-                no_ref += 1
-        else:
-            checked += 1
-            if result["ok"]:
-                ok_count += 1
+    yield {"event": "start", "total": total}
+    try:
+        for i, item in enumerate(files):
+            try:
+                result = _verify_one(d, item.get("name"), item.get("sha256"),
+                                     item.get("size"))
+            except Exception:  # noqa: BLE001
+                result = {"name": item.get("name"), "present": False, "ok": None,
+                          "method": None, "expected": None, "actual": None,
+                          "error": "read error (unexpected)"}
+            yield {"event": "file", "index": i, "total": total,
+                   "name": result["name"], "result": result}
+            if not result["present"] or result["ok"] is None:
+                skipped += 1
+                if result["present"]:
+                    no_ref += 1
             else:
-                corrupt_count += 1
-    yield {"event": "done",
-           "summary": {"checked": checked, "ok_count": ok_count,
-                       "corrupt_count": corrupt_count, "skipped": skipped,
-                       "no_ref": no_ref}}
+                checked += 1
+                if result["ok"]:
+                    ok_count += 1
+                else:
+                    corrupt_count += 1
+    finally:
+        yield {"event": "done",
+               "summary": {"checked": checked, "ok_count": ok_count,
+                           "corrupt_count": corrupt_count, "skipped": skipped,
+                           "no_ref": no_ref}}
 
 
 def download(model_id: str, dest: str | Path, *, revision: str | None = None,

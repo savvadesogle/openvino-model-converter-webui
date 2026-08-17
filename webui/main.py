@@ -107,6 +107,7 @@ def info():
         "disk_free_gb": round(free / 1e9, 1),
         "virtual_memory": checks.virtual_memory(),
         "versions": versions.versions(),
+        "resolved_versions": versions.resolved_versions(),
         "support": {
             "ready": ov_support.is_ready(),
             "count": len(ov_support.get_supported() or {}),
@@ -211,6 +212,8 @@ def api_tf_switch(body: TfSwitchIn):
     res = tfreq.install_version(body.version)
     if res.get("ok"):
         ov_support.reset()
+        tfreq.invalidate()
+        versions.invalidate()
     return res
 
 
@@ -222,6 +225,8 @@ def api_tf_restore():
     res = tfreq.restore()
     if res.get("ok"):
         ov_support.reset()
+        tfreq.invalidate()
+        versions.invalidate()
     return res
 
 

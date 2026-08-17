@@ -1,10 +1,10 @@
 """Transformers version requirements for OpenVINO export, derived from the installed optimum exporter."""
 from __future__ import annotations
 
-import importlib.metadata
 import json
 import re
 import subprocess
+import time
 from pathlib import Path
 
 import ov_converter.settings as S
@@ -181,11 +181,35 @@ def from_config_file(path: str) -> dict:
     return required_transformers(cfg)
 
 
+_VER_SCRIPT = "import importlib.metadata as m; print(m.version('transformers'))"
+_VER_TTL = 30.0
+_ver_cache: dict = {}
+
+
+def _invalidate_version_cache() -> None:
+    _ver_cache.clear()
+
+
 def installed_version() -> str | None:
+    now = time.time()
+    if _ver_cache and _ver_cache.get("ts") and (_ver_cache["ts"] + _VER_TTL) > now:
+        return _ver_cache.get("value")
     try:
-        return importlib.metadata.version("transformers")
+        r = subprocess.run([S.resolve_python(), "-c", _VER_SCRIPT],
+                           capture_output=True, text=True, encoding="utf-8",
+                           errors="replace", timeout=60, cwd=str(S.PROJECT_DIR))
     except Exception:  # noqa: BLE001
         return None
+    if r.returncode != 0:
+        return None
+    out = (r.stdout or "").strip()
+    _ver_cache["ts"] = time.time()
+    _ver_cache["value"] = out or None
+    return _ver_cache["value"]
+
+
+def invalidate() -> None:
+    _invalidate_version_cache()
 
 
 def _run_pip(cmd: list[str], timeout: int, log=None) -> dict:
@@ -204,10 +228,18 @@ def _run_pip(cmd: list[str], timeout: int, log=None) -> dict:
 
 
 def install_version(version: str, log=None) -> dict:
-    return _run_pip([S.resolve_python(), "-m", "pip", "install", f"transformers=={version}"],
-                    timeout=600, log=log)
+    res = _run_pip([S.resolve_python(), "-m", "pip", "install", f"transformers=={version}"],
+                   timeout=600, log=log)
+    if res.get("ok"):
+        _invalidate_version_cache()
+        res["version"] = installed_version()
+    return res
 
 
 def restore(log=None) -> dict:
-    return _run_pip([S.resolve_python(), "-m", "pip", "install", "-r",
-                     str(S.PROJECT_DIR / "requirements.txt")], timeout=900, log=log)
+    res = _run_pip([S.resolve_python(), "-m", "pip", "install", "-r",
+                    str(S.PROJECT_DIR / "requirements.txt")], timeout=900, log=log)
+    if res.get("ok"):
+        _invalidate_version_cache()
+        res["version"] = installed_version()
+    return res
