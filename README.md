@@ -51,4 +51,6 @@ python -m ov_converter.pipeline config.json
 - `ov_converter/checks.py` - disk / virtual-memory / parameter validation
 - `webui/` - FastAPI + SSE + flat pastel single-page UI
 
-See `PLAN.md` for the full design.
+See `PLAN.md` for the full design. For a complete, self-contained technical
+overview (modules, routes, data flow, environment gotchas, testing workflow)
+read **`ARCHITECTURE.md`** — a new agent can bootstrap from that file alone.
