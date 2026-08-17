@@ -37,6 +37,7 @@ class ConvertConfig:
     intermediate_dir: str | None = None
     run_genai_test: bool = True
     prompt: str | None = None
+    tfreq_auto_install: bool = False
     keep_fp16_export: bool = False
     download_only: bool = False
     include_only: bool = False
@@ -169,7 +170,32 @@ def run(cfg: ConvertConfig, emit: Emitter | None = None) -> dict:
     result["mode_token"] = naming.token_for(cfg.mode)
 
     # ---------------------------------------------------------------- export (dense fp16)
+    installed_swapped = False
     if cfg.mode != "none":
+        emit.start("tfreq")
+        try:
+            from ov_converter import tfreq
+            tfreq_res = tfreq.required_transformers(read_config(src))
+            result["tfreq"] = tfreq_res
+            if not tfreq_res.get("ok"):
+                if cfg.tfreq_auto_install and tfreq_res.get("recommended"):
+                    emit.log("installing transformers " + tfreq_res["recommended"] + " ...", "tfreq")
+                    rr = tfreq.install_version(tfreq_res["recommended"],
+                                               log=lambda t: emit.log(t, "tfreq"))
+                    if not rr.get("ok"):
+                        raise RuntimeError("failed to install transformers "
+                                           + tfreq_res["recommended"] + ": "
+                                           + (rr.get("error") or rr.get("output") or "pip error"))
+                    installed_swapped = True
+                    result["tfreq"]["installed"] = rr.get("version")
+                    emit.done("tfreq", "switched to transformers " + str(rr.get("version")))
+                else:
+                    raise RuntimeError(tfreq_res.get("reason") or "transformers version mismatch")
+            else:
+                emit.done("tfreq", "transformers " + str(tfreq_res.get("installed")) + " ok")
+        except Exception as e:  # noqa: BLE001
+            emit.fail("tfreq", str(e))
+            return result
         emit.start("export")
         try:
             from ov_converter.export import export_dense
@@ -256,6 +282,14 @@ def run(cfg: ConvertConfig, emit: Emitter | None = None) -> dict:
         except Exception as e:  # noqa: BLE001
             result["genai_test"] = {"ok": False, "error": str(e)}
             emit.fail("genai_test", str(e))
+
+    if cfg.tfreq_auto_install and installed_swapped:
+        emit.log("restoring pinned transformers version ...", "tfreq")
+        try:
+            from ov_converter import tfreq
+            tfreq.restore(log=lambda t: emit.log(t, "tfreq"))
+        except Exception:  # noqa: BLE001
+            emit.log("transformers restore failed (non-fatal)", "tfreq")
 
     result["done"] = True
     emit.emit("META", "done", json.dumps(result, ensure_ascii=False, default=str))

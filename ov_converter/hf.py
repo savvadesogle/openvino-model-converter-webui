@@ -102,6 +102,18 @@ def validate_model_id(model_id: str, token: str | None = None) -> dict:
                      for f in local_names if (local_dir / f).is_file())
 
     cfg = info.config if isinstance(info.config, dict) else {}
+    from ov_converter import tfreq
+    tf_cfg = {}
+    try:
+        from huggingface_hub import hf_hub_download
+        import json as _json
+        p = hf_hub_download(model_id, "config.json", revision=info.sha or None, token=token or None)
+        _d = _json.loads(Path(p).read_text(encoding="utf-8"))
+        if isinstance(_d, dict):
+            tf_cfg = _d
+    except Exception:  # noqa: BLE001
+        tf_cfg = cfg
+    tfreq_res = tfreq.required_transformers(tf_cfg)
     model_type = cfg.get("model_type")
     task = task_from_config(cfg)
     from ov_converter import support
@@ -109,6 +121,7 @@ def validate_model_id(model_id: str, token: str | None = None) -> dict:
 
     return {
         "ok": True,
+        "tfreq": tfreq_res,
         "id": info.id,
         "sha": info.sha,
         "pipeline_tag": info.pipeline_tag,
@@ -215,6 +228,7 @@ def detect_local(model_dir: str | Path) -> dict:
         "files_meta": files_meta,
         "total_bytes": total_bytes,
         "total_gb": round(total_bytes / 1e9, 2),
+        "tfreq": __import__("ov_converter.tfreq", fromlist=["x"]).required_transformers(cfg),
     }
 
 

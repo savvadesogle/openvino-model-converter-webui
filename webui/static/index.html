@@ -34,6 +34,7 @@
     </div>
     <div id="dl-tags" class="tags"></div>
     <div id="dl-support" class="tags"></div>
+    <div id="dl-tfreq" class="tags"></div>
     <div id="dl-info" class="info"></div>
   </div>
 
@@ -98,6 +99,7 @@
     </div>
     <input id="cv-text" placeholder="... or paste a HF link / local path here">
     <div id="cv-meta" class="info"></div>
+    <div id="cv-tfreq" class="banner"></div>
     <label class="check"><input id="cv-download-first" type="checkbox"> Download first if not present locally</label>
   </div>
 
@@ -172,6 +174,10 @@
     <div id="cv-disk" class="checkline"></div>
     <div id="cv-ram" class="checkline"></div>
     <div id="cv-errors" class="errors"></div>
+    <div class="grid">
+      <label class="check"><input id="cv-tfreq-auto" type="checkbox"> Auto-install required transformers version (swaps shared env, restores after)</label>
+      <div class="row"><button id="cv-tf-install" class="secondary" disabled>Install required transformers</button><button id="cv-tf-restore" class="secondary" disabled>Restore pinned versions</button></div>
+    </div>
     <div class="row"><button id="cv-run" class="primary" disabled>Convert</button><span class="spinner" id="cv-spinner" hidden></span><div class="progress" id="cv-progress"><div class="fill"></div></div><button id="cv-cancel" class="danger" hidden>Cancel</button></div>
   </div>
 

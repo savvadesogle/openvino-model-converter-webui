@@ -50,23 +50,55 @@ class _MEMORYSTATUSEX(ctypes.Structure):
 
 
 def virtual_memory() -> dict | None:
-    """Windows virtual memory incl. pagefile (via GlobalMemoryStatusEx)."""
-    if not hasattr(ctypes, "windll"):
-        return None
+    """Physical + pagefile/swap memory availability (cross-platform)."""
     try:
-        m = _MEMORYSTATUSEX()
-        m.dwLength = ctypes.sizeof(_MEMORYSTATUSEX)
-        ok = ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(m))
-        if not ok:
-            return None
-        return {
-            "total_phys_gb": round(m.ullTotalPhys / 1e9, 1),
-            "avail_phys_gb": round(m.ullAvailPhys / 1e9, 1),
-            "total_virtual_gb": round(m.ullTotalVirtual / 1e9, 1),
-            "avail_virtual_gb": round(m.ullAvailVirtual / 1e9, 1),
-            "total_pagefile_gb": round(m.ullTotalPageFile / 1e9, 1),
-            "avail_pagefile_gb": round(m.ullAvailPageFile / 1e9, 1),
-        }
+        if hasattr(ctypes, "windll"):
+            m = _MEMORYSTATUSEX()
+            m.dwLength = ctypes.sizeof(_MEMORYSTATUSEX)
+            ok = ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(m))
+            if not ok:
+                return None
+            avail_commit = m.ullAvailPageFile
+            return {
+                "total_phys_gb": round(m.ullTotalPhys / 1e9, 1),
+                "avail_phys_gb": round(m.ullAvailPhys / 1e9, 1),
+                "total_pagefile_gb": round(m.ullTotalPageFile / 1e9, 1),
+                "avail_pagefile_gb": round(m.ullAvailPageFile / 1e9, 1),
+                "total_virtual_gb": round(m.ullTotalVirtual / 1e9, 1),
+                "avail_virtual_gb": round(avail_commit / 1e9, 1),
+                "avail_commit_gb": round(avail_commit / 1e9, 1),
+            }
+        if Path("/proc/meminfo").exists():
+            info = {}
+            for line in Path("/proc/meminfo").read_text().splitlines():
+                key, _, rest = line.partition(":")
+                if not rest:
+                    continue
+                tokens = rest.strip().split()
+                if not tokens:
+                    continue
+                try:
+                    info[key.strip()] = int(tokens[0]) * 1024
+                except ValueError:
+                    continue
+            mem_total = info.get("MemTotal")
+            if mem_total is None:
+                return None
+            mem_avail = info.get("MemAvailable") or info.get("MemFree") or 0
+            swap_total = info.get("SwapTotal") or 0
+            swap_free = info.get("SwapFree") or 0
+            avail_commit = mem_avail + swap_free
+            to_gb = lambda v: round(v / 1e9, 1)  # noqa: E731
+            return {
+                "total_phys_gb": to_gb(mem_total),
+                "avail_phys_gb": to_gb(mem_avail),
+                "total_pagefile_gb": to_gb(swap_total),
+                "avail_pagefile_gb": to_gb(swap_free),
+                "total_virtual_gb": to_gb(mem_total + swap_total),
+                "avail_virtual_gb": to_gb(avail_commit),
+                "avail_commit_gb": to_gb(avail_commit),
+            }
+        return None
     except Exception:  # noqa: BLE001
         return None
 

@@ -175,6 +175,8 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 #dl-hash-card { border-top: 4px dashed #f2fbf6; margin-top: -14px; }
 #dl-hash-card[hidden] { display: none; }
 
+#dl-tfreq { margin-top: 2px; }
+#cv-tfreq:empty { display: none; }
 .tags { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; align-items: center; }
 .tag { background: #efeaf9; color: #5a4f86; border-radius: 999px; padding: 2px 10px; font-size: 12px; font-weight: 600; }
 .tag.support-ok { background: var(--mint); color: #2f6b4d; }

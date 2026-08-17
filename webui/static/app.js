@@ -5,6 +5,7 @@ const $ = (id) => document.getElementById(id);
 const state = {
   info: null, modes: [], sources: [], converted: [],
   dlInfo: null, cvInfo: null, currentMode: null, currentTask: null,
+  cvTfreq: null, tfBusy: false,
   taskActive: false, taskKind: null, dlFiles: null, dlSelected: null, dlLocalComplete: null, dlResources: null,
   validatedSub: null, dlSubDirty: false, validating: false, drives: [], hfEnvState: null,
 };
@@ -319,6 +320,35 @@ function bindEvents() {
   $("cv-model").addEventListener("change", onModelChange);
   $("cv-mode").addEventListener("change", onModeChange);
   $("cv-selftest").addEventListener("click", runSelfTest);
+  $("cv-tf-install").addEventListener("click", async () => {
+    const t = state.cvTfreq;
+    if (!t || !t.recommended) return;
+    setTfBusy(true);
+    appendLog("installing transformers " + t.recommended + " ...");
+    try {
+      const r = await api("/api/tf/switch", { method: "POST", body: JSON.stringify({ version: t.recommended }) });
+      if (r.ok) appendLog("switched to transformers " + r.version + " — reloading");
+      else appendLog("switch failed: " + (r.error || r.output || "?"));
+      await loadInfo();
+    } catch (e) { appendLog("switch error: " + e.message); }
+    setTfBusy(false);
+    renderCvTfreq();
+    updateCvChecks();
+  });
+  $("cv-tf-restore").addEventListener("click", async () => {
+    setTfBusy(true);
+    appendLog("restoring pinned transformers version ...");
+    try {
+      const r = await api("/api/tf/restore", { method: "POST" });
+      if (r.ok) appendLog("restored pinned versions");
+      else appendLog("restore failed: " + (r.error || r.output || "?"));
+      await loadInfo();
+    } catch (e) { appendLog("restore error: " + e.message); }
+    setTfBusy(false);
+    renderCvTfreq();
+    updateCvChecks();
+  });
+  $("cv-tfreq-auto").addEventListener("change", updateCvChecks);
   $("cv-run").addEventListener("click", runConvert);
   const cancelTask = () => api("/api/task/cancel", { method: "POST" }).catch(() => {});
   $("task-cancel").addEventListener("click", cancelTask);
@@ -357,6 +387,7 @@ async function validateDownload() {
   try {
     if ($("dl-tags")) { $("dl-tags").innerHTML = ""; $("dl-tags").hidden = true; }
     if ($("dl-support")) { $("dl-support").innerHTML = ""; }
+    if ($("dl-tfreq")) $("dl-tfreq").innerHTML = "";
     const mc = $("dl-model-card");
     if (mc) mc.classList.remove("done", "bad", "pending");
     if ($("dl-info")) { $("dl-info").innerHTML = ""; $("dl-info").className = "info"; }
@@ -486,6 +517,28 @@ function renderSupportBadge(i) {
     box.appendChild(chip);
   }
 }
+function renderTfreqBadge(i) {
+  const box = $("dl-tfreq");
+  if (!box) return;
+  box.innerHTML = "";
+  const t = i && i.tfreq;
+  if (!t || t.mode === "unknown") {
+    if (t) {
+      const chip = el("span", "tag support-unknown", "transformers version unknown");
+      box.appendChild(chip);
+    }
+    return;
+  }
+  if (t.ok) {
+    const chip = el("span", "tag support-ok", "✓ transformers " + (t.installed || "?") + " OK (needs " + t.required + ")");
+    box.appendChild(chip);
+  } else {
+    const chip = el("span", "tag", "");
+    chip.style.background = "#fdf6e3"; chip.style.color = "#8a6d1a";
+    chip.textContent = "⚠ needs transformers " + t.required + (t.recommended ? " (install " + t.recommended + ")" : "") + " — installed " + (t.installed || "none") + ", export will fail";
+    box.appendChild(chip);
+  }
+}
 function renderResources(i) {
   const card = $("dl-resources-card");
   const box = $("dl-resources");
@@ -549,6 +602,7 @@ function renderDlInfo(res) {
     $("dl-tags").innerHTML = "";
     $("dl-tags").hidden = true;
     if ($("dl-support")) { $("dl-support").innerHTML = ""; }
+    if ($("dl-tfreq")) $("dl-tfreq").innerHTML = "";
     const mc = $("dl-model-card");
     if (mc) mc.classList.remove("done", "bad", "pending");
     $("dl-hash-card").hidden = true;
@@ -598,6 +652,7 @@ function renderDlInfo(res) {
       $("dl-tags").hidden = true;
     }
     renderSupportBadge(i);
+    renderTfreqBadge(i);
     renderResources(i);
     updateDirLink();
     state.dlNeededBytes = i.size_bytes;
@@ -644,6 +699,7 @@ function renderDlInfo(res) {
     state.dlFiles = i.files || [];
     renderFilePicker(i.files_meta || []);
     renderSupportBadge(i);
+    renderTfreqBadge(i);
     renderResources(i);
   }
 }
@@ -987,19 +1043,45 @@ function renderModelSelect() {
   if (prev && [...sel.options].some((o) => o.value === prev)) sel.value = prev;
   onModelChange();
 }
+function renderCvTfreq() {
+  const box = $("cv-tfreq");
+  if (!box) return;
+  const t = state.cvTfreq;
+  const installBtn = $("cv-tf-install");
+  const restoreBtn = $("cv-tf-restore");
+  if (!t || t.mode === "unknown") {
+    box.className = "banner";
+    box.textContent = "";
+    if (installBtn) installBtn.disabled = true;
+    if (restoreBtn) restoreBtn.disabled = state.tfBusy || false;
+    return;
+  }
+  if (t.ok) {
+    box.className = "banner show ok";
+    box.textContent = "Transformers " + (t.installed || "?") + " satisfies " + t.required + " — OK";
+  } else {
+    box.className = "banner show warn";
+    box.textContent = t.reason + (t.recommended ? "  —  use Install to switch to " + t.recommended : "");
+  }
+  if (installBtn) installBtn.disabled = state.tfBusy || t.ok || !t.recommended;
+  if (restoreBtn) restoreBtn.disabled = state.tfBusy;
+}
 async function onModelChange() {
   const v = $("cv-model").value;
   $("cv-meta").innerHTML = "";
-  if (!v) { state.cvInfo = null; updateCvChecks(); return; }
+  if (!v) { state.cvInfo = null; state.cvTfreq = null; renderCvTfreq(); updateCvChecks(); return; }
   if (v.startsWith("ov:")) {
     state.cvInfo = null;
+    state.cvTfreq = null;
     setInfo("cv-meta", "This is an already-converted OpenVINO model. Pick a dense source instead.", "bad");
+    renderCvTfreq();
     updateCvChecks();
     return;
   }
   const src = state.sources.find((s) => s.path === v);
   if (src) {
     state.cvInfo = src;
+    state.cvTfreq = src.tfreq || null;
     setInfo("cv-meta",
       `${src.name} · ${src.task} · ${src.model_type || "?"} · ${src.size_gb} GB · tokenizer: ${src.has_tokenizer ? "yes" : "no"}` +
       (src.is_moe ? "\n· MoE model (int2-mix available)" : ""), "ok");
@@ -1008,9 +1090,11 @@ async function onModelChange() {
     state.cvParams = src.size_bytes / 2;
   } else {
     // custom / pasted path
+    state.cvTfreq = null;
     const p = v.replace(/^[A-Za-z]:[\\/]/, "");
     $("cv-text").value = p || "";
   }
+  renderCvTfreq();
   updateCvName();
   updateCvChecks();
 }
@@ -1098,8 +1182,18 @@ function updateCvChecks() {
   if (m.moe_only && state.cvInfo && !state.cvInfo.is_moe) errors.push("This mode requires a MoE model.");
   if (m.available === false) errors.push("Mode not available in the installed NNCF.");
   if (!state.cvInfo && !$("cv-text").value.trim() && !$("cv-model").value) errors.push("Choose a model.");
+  const tf = state.cvTfreq;
+  if (tf && tf.ok === false && tf.mode !== "unknown" && !$("cv-tfreq-auto").checked) {
+    errors.push("Transformers " + (tf.required || "?") + " required but " + (tf.installed || "none") + " installed — enable auto-install or install it first.");
+  }
   if (errors.length) { wrap.innerHTML = ""; errors.forEach((e) => wrap.appendChild(el("div", null, "⚠ " + e))); }
   $("cv-run").disabled = !(okDisk && errors.length === 0);
+}
+function setTfBusy(v) {
+  state.tfBusy = v;
+  $("cv-tf-install").disabled = v || (state.cvTfreq ? state.cvTfreq.ok : true);
+  $("cv-tf-restore").disabled = v;
+  renderCvTfreq();
 }
 function estimateConvertNeeded(params, bits) {
   if (!params) return 0;
@@ -1132,14 +1226,16 @@ async function runConvert() {
     delete_intermediate: $("cv-delete-int").checked,
     output_dir: $("cv-outdir").value.trim() || null,
     run_genai_test: $("cv-genai").checked,
+    tfreq_auto_install: $("cv-tfreq-auto").checked,
   };
   await startTask("convert", cfg, "/api/convert");
 }
 
 /* ---------------------------------------------------------------- Task streaming */
-const STAGES = ["validate", "download", "export", "compress", "package", "tokenizer", "genai_test"];
+const STAGES = ["validate", "download", "tfreq", "export", "compress", "package", "tokenizer", "genai_test"];
 const STAGE_DONE_LABEL = {
-  validate: "validated", download: "downloaded", export: "exported",
+  validate: "validated", download: "downloaded", tfreq: "transformers ok",
+  export: "exported",
   compress: "compressed", package: "packaged", tokenizer: "tokenizer ok", genai_test: "genai test ok"
 };
 function bindTaskStream() {

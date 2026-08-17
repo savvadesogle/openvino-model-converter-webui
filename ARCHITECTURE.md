@@ -57,6 +57,7 @@ T:\tools\ov-converter\
 │   ├── versions.py       versions of key libraries
 │   ├── checks.py         disk / virtual-memory(pagefile) / param validation
 │   ├── resources.py      pre-download resource feasibility (disk/RAM per stage)
+│   ├── tfreq.py          per-model transformers version requirements (switch/restore)
 │   ├── hf.py             HF link parsing, validate, download, local_check, verify_hashes
 │   ├── scan.py           local model scanner (excludes GGUF/OV/quantized)
 │   ├── export.py         dense fp16 OpenVINO export via optimum-cli + submodel listing
@@ -131,6 +132,8 @@ conda envs. `settings.env_script(name)` resolves CLI scripts (e.g. `optimum-cli.
   restart. Interface: `warm_start/is_ready/get_supported/last_error/check_support`;
   `check_support(model_type, task)` returns `{ok, ready, state, model_type, task,
   supported_tasks, reason}` with `state ∈ supported | task_mismatch | unsupported | unknown`.
+  `reset()` clears the in-memory registry and re-warms (used after a transformers version
+  switch).
 - **_support_probe.py** — subprocess entry that builds the registry + disk cache inside the
   resolved env.
 - **scan.py** — walks `T:\models\<org>\<model>`; excludes `.cache`, `models--*`, `.*`,
@@ -148,15 +151,29 @@ conda envs. `settings.env_script(name)` resolves CLI scripts (e.g. `optimum-cli.
 - **genai_test.py** — `run_test(model_dir, ...)` loads `LLMPipeline`/`VLMPipeline` (VLM uses
   `ov.Tensor(_sample_image())` — images must be OV tensors, not paths), returns
   `{ok, is_vlm, prompt, output, tokens, elapsed_s, tok_per_s}`.
-- **checks.py** — `disk_free/disk_check`, `virtual_memory()` (Windows `GlobalMemoryStatusEx`
-  incl. pagefile), `ram_check`, params estimates, `validate_convert(mode, group_size, ...)`.
+- **checks.py** — `disk_free/disk_check`, `virtual_memory()` — cross-platform: on Windows via
+  `GlobalMemoryStatusEx` (`ullAvailPageFile` is the commit limit; `avail_virtual_gb` means
+  that, not address space), on Linux parses `/proc/meminfo` (`MemAvailable` + `SwapFree`) —
+  `ram_check`, params estimates, `validate_convert(mode, group_size, ...)`.
+- **tfreq.py** — per-model transformers version requirements for OpenVINO export, derived from
+  the installed optimum exporter: a static `TF_CONSTRAINTS` table of `model_type` → min/max
+  (default floor 4.57) combined with the config.json `transformers_version` floor.
+  `required_transformers(cfg)` returns `{ok, required, recommended, installed, mode, reason,
+  ...}` (`mode` ∈ exact | range | min | unknown); `install_version(version)` / `restore()`
+  run pip via `settings.resolve_python()` (`restore` re-installs requirements.txt).
 - **resources.py** — pre-download resource feasibility: `analyze(params, size_bytes,
-  mode_bits, download_path, output_path)` returns per-stage (`download`/`convert`/`compress`)
-  disk + RAM estimates vs. actual availability — disk free on the target drive (resolved via
-  an ancestor walk, so not-yet-created folders work) and virtual memory incl. pagefile via
-  `checks.virtual_memory()`. Each stage dict carries `state` in `ok|warn|fail|unknown`
-  (with `ok`, `need_disk_gb`/`free_disk_gb`/`need_ram_gb`/`avail_ram_gb`/`result_gb`/
-  `estimated`/`issue`) and `overall` is the worst-state verdict. When params are unknown
+  mode_bits, download_path, output_path, group_size, scale_bits)` returns per-stage
+  (`download`/`convert`/`compress`) disk + RAM estimates vs. actual availability — disk free
+  on the target drive (resolved via an ancestor walk, so not-yet-created folders work) and
+  virtual memory via `checks.virtual_memory()` (the real available commit: Windows pagefile /
+  Linux swap). Formulas: download = source×1.05, convert = source×1.05 + fp16_ir×1.15,
+  compress = fp16_ir×1.15 + res_bytes×1.1, where compressed size =
+  `params×(bits + scale_bits/group_size)/8×1.15` (scale_bits 16 for int/nf4, 8 for mxfp;
+  group_size −1 → scale overhead 0). Peak RAM: export ≈ `params×4.8`, compress ≈
+  `params×3.0`. Each stage dict carries `state` in `ok|warn|fail|unknown` (with `ok`,
+  `need_disk_gb`/`free_disk_gb`/`need_ram_gb`/`avail_ram_gb`/`result_gb`/`estimated`/`issue`),
+  the warn margin is 1.25× the need, and `overall` is the worst-state verdict; the dict also
+  returns `recommendations` (human-readable fixes for failed stages). When params are unknown
   they are estimated from size (`size_bytes/2`, bf16 assumption; `estimated_params=true`).
 - **modes.py** — `list_modes()` from `nncf.CompressWeightsMode` + curated OV map;
   `self_test_all()` runs a tiny compress+compile per mode.
@@ -168,20 +185,25 @@ conda envs. `settings.env_script(name)` resolves CLI scripts (e.g. `optimum-cli.
 `ConvertConfig` dataclass fields: `model_id, model_path, dest, download, revision, token,
 task, mode, group_size, all_layers, ratio, backup, data_aware, only_text,
 delete_intermediate, output_dir, intermediate_dir, run_genai_test, prompt,
-keep_fp16_export, download_only, include_only, files, hf_home, hf_hub_cache`.
+tfreq_auto_install, keep_fp16_export, download_only, include_only, files, hf_home,
+hf_hub_cache`.
 
 Stages (each emits `@@STAGE <stage> | start|done|fail <detail>`; free text as
 `@@LOG <stage> | text`; progress as `@@PROGRESS <stage> <pct>`; final result as
 `@@META done | <json>`):
 
 ```
-validate → download (if needed) → export (dense fp16) → compress → package →
+validate → download (if needed) → tfreq → export (dense fp16) → compress → package →
 tokenizer check → genai_test  (download_only stops after download)
 ```
 
 - Validate: resolve source (local path / already-downloaded dir), check mode availability
   and param rules; emit `done source=<path>` or just `ok`.
 - Download: `hf.download` with `@@PROGRESS`; `.cache` removed.
+- Tfreq: validates the model's transformers requirement via `tfreq.required_transformers`
+  (before export, skipped for `mode="none"`); when mismatched it auto-installs the required
+  version if `tfreq_auto_install` is set (and restores the pinned one from requirements.txt
+  after the run), otherwise the stage fails with the reason.
 - Export: `optimum-cli` fp16 → `<Base>-fp16-ov`; submodel list logged.
 - Compress: `compress_dir` per submodel; report dict in `done`.
 - Package: copy metadata, write `manifest.json`, generate `README.md` model card.
@@ -207,8 +229,8 @@ API routes:
 | `/api/modes/self-test` | POST | run per-mode compress+compile on a tiny model |
 | `/api/models` | GET | `{sources, converted}` from `scan` |
 | `/api/model/estimate` | POST `{path}` | size_gb + params |
-| `/api/resources` | POST `{params, size_bytes, mode_bits, download_path, output_path}` | `{resources: analyze(...)}` — reusable resource estimate (e.g. Convert tab) |
-| `/api/hf/validate` | POST `{text, token, dest?}` | parse → local `detect_local` or HF `validate_model_id`; `{kind, info}`; on ok `info.resources = resources.analyze(params, size_bytes, download_path=dest)` |
+| `/api/resources` | POST `{params, size_bytes, mode_bits, download_path, output_path}` | `{resources: analyze(...)}` — reusable resource estimate (e.g. Convert tab); `analyze` also accepts `group_size`/`scale_bits` for the compressed-size formula |
+| `/api/hf/validate` | POST `{text, token, dest?}` | parse → local `detect_local` or HF `validate_model_id`; `{kind, info}`; `info.tfreq` carries the required-transformers verdict; on ok `info.resources = resources.analyze(params, size_bytes, download_path=dest)` |
 | `/api/model/local-check` | POST `{path, files}` | `local_check` (per-file presence) |
 | `/api/model/verify-hash` | POST `{path, files}` | NDJSON stream: `start/file/done` (sha256/size) |
 | `/api/disk` | GET `?path=` | walks up to the nearest existing ancestor, then `shutil.disk_usage` → free_gb/total_gb; returns `resolved_path` |
@@ -216,6 +238,8 @@ API routes:
 | `/api/mkdir` | POST `{path}` | create dirs under any local drive (Windows) / any absolute path (non-Windows); refuses UNC/network paths and relative paths |
 | `/api/download` | POST | start a download-only task (one at a time) |
 | `/api/convert` | POST | start a convert task |
+| `/api/tf/switch` | POST `{version}` | pip-install `transformers=={version}` via `resolve_python()`; gated on no busy task; on success `ov_support.reset()` re-probes the support registry |
+| `/api/tf/restore` | POST | re-run `pip install -r requirements.txt` (restores the pinned transformers); gated on no busy task; on success `ov_support.reset()` |
 | `/api/task/cancel` | POST | cancel the running task |
 | `/api/task/status` | GET | `{busy, task:{...}}` |
 | `/api/task/stream` | GET (SSE) | live log lines of the current task; ends with `done` event |
@@ -234,13 +258,14 @@ since an index.
 Flat pastel, square blocks (`--radius:0`), all labels English, `ⓘ`-free (explanations are
 visible `.desc`/`.hint` paragraphs). Two tabs: Download, Convert.
 
-Key elements (ids): `dl-text, dl-validate, dl-tags, dl-info, dl-rev, dl-token,
+Key elements (ids): `dl-text, dl-validate, dl-tags, dl-tfreq, dl-info, dl-rev, dl-token,
 dl-root, dl-drive, dl-sub, dl-dir-link, .dir-label, dl-local, dl-files, dl-all,
 dl-none, dl-disk, dl-run, dl-spinner, dl-cancel, dl-progress, dl-hash-card,
 dl-verify, dl-vspinner, dl-hashres, hf-drive, hf-base, hf-derived, hf-env-res,
 cv-model, cv-task, cv-mode, cv-group, cv-backup, cv-ratio, cv-all-layers, cv-awq,
 cv-scale, cv-gptq, cv-lora, cv-dataset, cv-nsamples, cv-only-text, cv-outdir,
-cv-delete-int, cv-genai, cv-disk, cv-ram, cv-errors, cv-run, cv-spinner,
+cv-delete-int, cv-genai, cv-disk, cv-ram, cv-errors, cv-tfreq, cv-tfreq-auto,
+cv-tf-install, cv-tf-restore, cv-run, cv-spinner,
 cv-cancel, cv-progress, task-panel, task-status, task-collapse, task-stages/stages,
 task-log, task-cancel(STOP), task-clear, panel-download, panel-convert, dl-path-spinner
 (JS-created), hash-pct/hash-list (JS-created), create-btn-* (JS-created)`.
@@ -271,6 +296,21 @@ red, `.state-unknown` grey) with a status dot, the needed vs. available disk/RAM
 (`#dl-run`) whenever any stage state is `fail` and appends an extra
 `Resources: NOT ENOUGH — see Resources check above.` line to `#dl-disk`.
 
+The Download tab also shows a transformers-version badge in `#dl-tfreq` (below the support
+badge, via `renderTfreqBadge()`): a green `✓ transformers <v> OK (needs <required>)` chip when
+`tfreq.ok`; an amber `⚠ needs transformers <required> (install <recommended>)` chip on a
+mismatch; a grey `transformers version unknown` chip when the requirement can't be
+determined. The badge resets on every re-validate.
+
+The Convert tab shows a `#cv-tfreq` banner for the selected model (via `renderCvTfreq()`,
+using the `tfreq` verdict attached to each scanned source): green `Transformers <v>
+satisfies <required> — OK`, or amber `reason — use Install to switch to <recommended>`. An
+"Auto-install required transformers" checkbox (`#cv-tfreq-auto`) makes the pipeline swap the
+shared env for the run and restore it afterwards; `#cv-tf-install` / `#cv-tf-restore` call
+`/api/tf/switch` / `/api/tf/restore` (`setTfBusy()` disables both during a swap).
+`updateCvChecks()` blocks the Run button (`#cv-run`) on a transformers mismatch unless
+auto-install is enabled.
+
 `app.js` state object holds: `info, modes, sources, converted, dlInfo, cvInfo,
 currentMode, currentTask, taskActive, taskKind, dlFiles, dlSelected (Set), dlNeededBytes,
 dlLocalComplete, dlLocalExists, dlSubDirty, validatedSub, drives, validating`.
@@ -294,8 +334,8 @@ Notable behavior:
 - Hash verify: `verifyHashes()` streams NDJSON; `#hash-pct` shows `Verifying hashes… NN%`,
   `#hash-list` rows update per file (`✓ ok (ref sha256: …)` / `✓ ok (size …)` /
   `✕ MISMATCH` / `✕ size mismatch` / `no reference (not LFS)` / `not present`).
-- Task panel: stage chips always show the full list `validate download export compress
-  package tokenizer genai_test`; `setStage(name,status)` toggles running/done/fail;
+- Task panel: stage chips always show the full list `validate download tfreq export
+  compress package tokenizer genai_test`; `setStage(name,status)` toggles running/done/fail;
   done log uses past-tense labels (`STAGE_DONE_LABEL`); `#task-collapse` toggles collapsed
   (collapsed hides only `#task-log` + `.row`); `#task-cancel` labelled `STOP`; status chip
   shows `<kind> completed` / `<kind> FAILED` (`.chip.failed` red).
@@ -311,10 +351,17 @@ Anything not starting with `@@` is treated as a raw log line.
 
 ## 7. Critical environment gotchas
 
-1. **transformers is pinned to `==5.2.0`** (requirements.txt). optimum 2.3.0 exports
-   `qwen3_5`/`qwen3_5_moe` ONLY with transformers 5.2.x
-   (`Qwen3_5OpenVINOConfig MIN=5.2.0 MAX=5.2.99`, needs `Qwen3_5DynamicCache`). Newer
-   transformers breaks the OpenVINO exporter import.
+1. **Transformers requirements are per-model, not global.** The repo pins `==5.2.0`
+   (requirements.txt) and optimum 2.3.0 exports `qwen3_5`/`qwen3_5_moe` ONLY with
+   transformers 5.2.x (`Qwen3_5OpenVINOConfig MIN=5.2.0 MAX=5.2.99`, needs
+   `Qwen3_5DynamicCache`), but other models need different versions — e.g. `qwen3_asr`
+   requires exactly 4.57.6 and `muse_glimmer` ≥5.15. Newer transformers can also break the
+   OpenVINO exporter import. The UI/tool therefore detects per-model requirements
+   (`tfreq.py`) and can switch the shared env via pip (`/api/tf/switch` + `/api/tf/restore`,
+   gated on no busy task, swap-with-restore). `settings._PY_QUERY` accepts transformers
+   >=4.51 so the env still resolves after a swap; the running server keeps working during a
+   swap (no module imports transformers in-process) but a restart mid-swap could see the
+   swapped version.
 2. **Subprocess env**: always launch pipeline/CLI with `settings.resolve_python()`
    (an interpreter that has openvino+nncf+optimum+transformers 5.2), and CLI tools via
    `settings.env_script(...)` — otherwise the wrong conda env gets picked up from PATH.
@@ -366,6 +413,10 @@ python -m ov_converter.pipeline logs\some_config.json
 - Resource analysis: verify via `resources.analyze(...)` under `openvino-latest` (e.g.
   `analyze(params=1e9, size_bytes=2e9)` → `convert.need_disk_gb` 4.5,
   `compress.result_gb` 0.5), plus `node --check webui/static/app.js`.
+- Transformers requirement: `tfreq.required_transformers({"model_type": "qwen3_asr"})` →
+  `recommended "4.57.6"`, `ok false` (with 5.2.0 installed), and
+  `tfreq.required_transformers({"model_type": "qwen3_5", "transformers_version": "4.57.0.dev0"})`
+  → `required "5.2.x"`.
 
 ## 10. Commit conventions
 

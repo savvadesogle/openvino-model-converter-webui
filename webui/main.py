@@ -85,6 +85,10 @@ class VerifyHashIn(BaseModel):
     files: list[dict] = []
 
 
+class TfSwitchIn(BaseModel):
+    version: str
+
+
 @app.get("/")
 def index():
     return FileResponse(STATIC / "index.html")
@@ -197,6 +201,28 @@ def api_resources(body: ResourcesIn):
     return {"resources": resources.analyze(
         params=body.params, size_bytes=body.size_bytes, mode_bits=body.mode_bits,
         download_path=body.download_path, output_path=body.output_path)}
+
+
+@app.post("/api/tf/switch")
+def api_tf_switch(body: TfSwitchIn):
+    if manager.is_busy():
+        raise HTTPException(409, "Another task is running.")
+    from ov_converter import tfreq
+    res = tfreq.install_version(body.version)
+    if res.get("ok"):
+        ov_support.reset()
+    return res
+
+
+@app.post("/api/tf/restore")
+def api_tf_restore():
+    if manager.is_busy():
+        raise HTTPException(409, "Another task is running.")
+    from ov_converter import tfreq
+    res = tfreq.restore()
+    if res.get("ok"):
+        ov_support.reset()
+    return res
 
 
 @app.post("/api/hf/validate")

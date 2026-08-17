@@ -77,6 +77,7 @@ def _classify(d: Path) -> dict | None:
         "has_tokenizer": (d / "tokenizer.json").exists() or (d / "tokenizer_config.json").exists(),
         "is_vlm": bool(cfg.get("vision_config")),
         "is_moe": _is_moe(cfg, arch),
+        "tfreq": __import__("ov_converter.tfreq", fromlist=["x"]).required_transformers(cfg),
     }
 
 

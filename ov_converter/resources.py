@@ -56,7 +56,7 @@ def _download_stage(orig: int, dl_need: int, free: int | None, path: str,
             return _stage("fail", False, need_gb, free_gb, None, None, None,
                           estimated,
                           f"need {need_gb} GB disk, only {free_gb} GB free (on {path})")
-        if free < dl_need * 1.2:
+        if free < dl_need * 1.25:
             return _stage("warn", True, need_gb, free_gb, None, None, None,
                           estimated,
                           f"disk tight (need {need_gb} GB, free {free_gb} GB)")
@@ -90,7 +90,7 @@ def _export_stage(params: int | None, disk_need: int, ram_need: int,
             return _stage("fail", False, need_disk_gb, free_gb, need_ram_gb,
                           avail_gb, result_gb, estimated, "; ".join(fails))
         warnings = []
-        if free < disk_need * 1.2 or avail_ram < ram_need * 1.2:
+        if free < disk_need * 1.25 or avail_ram < ram_need * 1.25:
             warnings.append("tight")
         if estimated:
             warnings.append("param count estimated")
@@ -104,11 +104,41 @@ def _export_stage(params: int | None, disk_need: int, ram_need: int,
                       estimated, "unexpected error")
 
 
+def _recommendations(stages: dict, params, output_path: str,
+                     download_path: str) -> list[str]:
+    recs: list[str] = []
+    for name, st in stages.items():
+        if st["state"] != "fail":
+            continue
+        if name == "download":
+            recs.append(f"Not enough disk on {download_path} — free up space or pick another drive.")
+        else:
+            need_ram = st.get("need_ram_gb")
+            avail_ram = st.get("avail_ram_gb")
+            if need_ram is not None and avail_ram is not None and avail_ram < need_ram:
+                recs.append(
+                    f"Not enough memory (need {need_ram} GB, available {avail_ram} GB) "
+                    f"— close other apps or increase the Windows pagefile / Linux swap.")
+            else:
+                need_disk = st.get("need_disk_gb")
+                free_disk = st.get("free_disk_gb")
+                if need_disk is not None and free_disk is not None and free_disk < need_disk:
+                    recs.append(f"Not enough disk on {output_path} — free up space or pick another drive.")
+        if len(recs) >= 3:
+            break
+    if not recs and params is None:
+        recs.append("Param count unknown — install psutil or provide "
+                    "model.safetensors.index.json for a precise estimate.")
+    return recs
+
+
 def analyze(params: int | None = None,
             size_bytes: int = 0,
             mode_bits: int | None = None,
             download_path: str | None = None,
-            output_path: str | None = None) -> dict:
+            output_path: str | None = None,
+            group_size: int | None = None,
+            scale_bits: int | None = None) -> dict:
     if params and params > 0:
         params = int(params)
         estimated = False
@@ -143,22 +173,25 @@ def analyze(params: int | None = None,
         avail_ram = None
 
     orig = size_bytes
-    fp16 = params * 2 if params else 0
     res_bits = mode_bits if mode_bits else 4
-    res_bytes = int(params * res_bits / 8) if params else 0
-    res_worst = fp16
+    gs = group_size if group_size is not None else 128
+    sb = scale_bits if scale_bits is not None else 16
+    scale_overhead = (sb / gs) if (gs and gs > 0) else 0.0
+    fp16 = params * 2 if params else 0
+    res_bytes = int(params * (res_bits + scale_overhead) / 8 * 1.15) if params else 0
     dl_need = int(orig * 1.05) if orig else 0
-    conv_disk_need = int(fp16 * 1.15 + res_worst * 1.1)
-    comp_disk_need = int(fp16 * 1.15 + res_bytes * 1.1)
-    ram_need = int(params * 2 * 2 * 1.2) if params else 0
+    conv_disk_need = int(fp16 * 1.05 + fp16 * 1.15)
+    comp_disk_need = int(fp16 * 1.15 + res_bytes)
+    ram_export = int(params * 4.8) if params else 0
+    ram_compress = int(params * 3.0) if params else 0
 
     result_gb = _gb(res_bytes) if params else None
 
     stages = {
         "download": _download_stage(orig, dl_need, free_dl, download_path, estimated),
-        "convert": _export_stage(params, conv_disk_need, ram_need, free_out,
+        "convert": _export_stage(params, conv_disk_need, ram_export, free_out,
                                  avail_ram, estimated),
-        "compress": _export_stage(params, comp_disk_need, ram_need, free_out,
+        "compress": _export_stage(params, comp_disk_need, ram_compress, free_out,
                                   avail_ram, estimated, result_gb),
     }
 
@@ -170,6 +203,10 @@ def analyze(params: int | None = None,
         "estimated_params": estimated,
         "size_gb": round(size_bytes / 1e9, 2),
         "mode_bits": res_bits,
+        "group_size": gs,
+        "scale_bits": sb,
         "stages": stages,
         "overall": overall,
+        "recommendations": _recommendations(stages, params, output_path,
+                                            download_path),
     }

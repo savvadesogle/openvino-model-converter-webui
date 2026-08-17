@@ -61,6 +61,15 @@ def warm_start() -> None:
     t.start()
 
 
+def reset() -> None:
+    global _SUPPORTED, _ERROR, _started
+    _ready.clear()
+    _SUPPORTED = None
+    _ERROR = None
+    _started = False
+    warm_start()
+
+
 def is_ready() -> bool:
     return _ready.is_set()
 

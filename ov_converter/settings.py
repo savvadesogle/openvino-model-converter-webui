@@ -50,10 +50,14 @@ def model_dir(model_id: str) -> Path:
 
 
 _PY_QUERY = (
-    "import importlib.util as u, importlib.metadata as m;"
+    "import importlib.util as u, importlib.metadata as m, re;"
     "import sys;"
     "ok = all(u.find_spec(x) is not None for x in ('openvino', 'nncf', 'optimum', 'transformers'));"
-    "ok = ok and m.version('transformers').startswith('5.2');"
+    "try:"
+    "    mm = re.match(r'(\\d+)\\.(\\d+)', m.version('transformers'));"
+    "    ok = ok and mm is not None and (int(mm.group(1)), int(mm.group(2))) >= (4, 51);"
+    "except Exception:"
+    "    ok = False;"
     "sys.exit(0 if ok else 1)"
 )
 
@@ -69,7 +73,7 @@ def _check_python(exe: Path) -> bool:
 
 
 def resolve_python() -> str:
-    """Pick a Python that can run the whole pipeline (openvino+nncf+optimum+transformers 5.2).
+    """Pick a Python that can run the whole pipeline (openvino+nncf+optimum+transformers >=4.51).
 
     Prefer the current interpreter; otherwise scan conda envs under the same root.
     """
