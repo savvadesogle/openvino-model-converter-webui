@@ -152,13 +152,41 @@ def detect_local(model_dir: str | Path) -> dict:
     cfg = read_config(d)
     has_weights = (d / "model.safetensors.index.json").exists() or \
         bool(list(d.glob("*.safetensors"))) or bool(list(d.glob("*.bin")))
+    files_meta = []
+    total_bytes = 0
+    if d.is_dir():
+        for p in d.rglob("*"):
+            if not p.is_file():
+                continue
+            rel = p.relative_to(d)
+            # skip files living inside dot-DIRECTORIES (e.g. .cache, .git),
+            # but keep dot-FILES such as .gitattributes / .gitignore
+            skip = False
+            for i, part in enumerate(rel.parts):
+                if part.startswith("."):
+                    node = d.joinpath(*rel.parts[: i + 1])
+                    if node.is_dir():
+                        skip = True
+                        break
+            if skip:
+                continue
+            name = rel.as_posix()
+            files_meta.append({"name": name, "size": p.stat().st_size, "sha256": None})
+            total_bytes += p.stat().st_size
+    files = [f["name"] for f in files_meta]
+    license = cfg.get("license")
+    if not isinstance(license, str) or not license:
+        license = "see LICENSE" if (d / "LICENSE").exists() else None
+    task = task_from_config(cfg) if cfg else None
+    m = re.match(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$", cfg.get("_name_or_path") or "")
     return {
         "ok": cfg_path.exists() and has_weights,
         "path": str(d),
         "name": d.name,
         "config": cfg_path.exists(),
         "has_weights": has_weights,
-        "task": task_from_config(cfg) if cfg else None,
+        "task": task,
+        "pipeline_tag": task,
         "model_type": cfg.get("model_type") if cfg else None,
         "architectures": (cfg.get("architectures") or [None])[0],
         "is_quantized": bool(cfg.get("quantization_config")),
@@ -169,6 +197,12 @@ def detect_local(model_dir: str | Path) -> dict:
         "size_gb": round(checks.dir_size(d) / 1e9, 2),
         "size_bytes": checks.dir_size(d),
         "params": checks.params_from_index(d),
+        "id": m.group(0) if m else None,
+        "license": license,
+        "files": files,
+        "files_meta": files_meta,
+        "total_bytes": total_bytes,
+        "total_gb": round(total_bytes / 1e9, 2),
     }
 
 

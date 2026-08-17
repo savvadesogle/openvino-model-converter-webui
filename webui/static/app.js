@@ -162,6 +162,7 @@ async function validateHfEnv() {
   if (!res) return;
   document.querySelectorAll(".create-btn").forEach((b) => b.remove());
   const base = composeHfBase().trim();
+  const drive = (base.match(/^([A-Za-z]:)/) || [])[1] || (osSep() === "/" ? "/" : "?");
   if (!base || !/^[A-Za-z]:[\\/]/.test(base) && !(osSep() === "/" && base.startsWith("/"))) {
     res.className = "banner show bad";
     res.textContent = base ? "Invalid base path" : "HF base path is empty";
@@ -171,7 +172,6 @@ async function validateHfEnv() {
   try {
     const r = await api("/api/disk?path=" + encodeURIComponent(base));
     if (r.ok === false) {
-      const drive = (String(base).match(/^([A-Za-z]):/) || [])[1] || "?";
       let driveOk = false;
       if (drive !== "?") {
         try { driveOk = (await api("/api/disk?path=" + encodeURIComponent(drive + ":\\"))).ok === true; } catch (e) {}
@@ -451,17 +451,44 @@ function renderDlInfo(res) {
     return;
   }
   if (res.kind === "local") {
-    setInfo("dl-info",
-      `Local model: ${i.name}\nmodel_type: ${i.model_type} · task: ${i.task} · size: ${i.size_gb} GB` +
-      (i.is_quantized ? "\n⚠ already quantized (not convertible)" : "") +
-      (i.is_ov ? "\n⚠ already an OpenVINO model" : "") +
-      (i.is_gguf ? "\n⚠ GGUF file (not convertible)" : ""),
-      i.ok ? "ok" : "bad");
+    const files = i.files_meta || [];
     const parts = String(i.path || "").split(/[\\/]+/).filter(Boolean);
     $("dl-sub").value = parts[parts.length - 1] || "";
     $("dl-root").value = parts.slice(0, -1).join("\\") || "";
-    $("dl-tags").innerHTML = "";
-    $("dl-tags").hidden = true;
+    state.validatedSub = normalizeSub($("dl-sub").value);
+    state.dlSubDirty = false;
+    if (files.length) {
+      const totalBytes = files.reduce((s, f) => s + (Number(f.size) || 0), 0);
+      let html = "<table class=\"mini-table\"><thead><tr><th>File</th><th>Size</th><th>Purpose</th></tr></thead><tbody>";
+      for (const f of files) {
+        html += "<tr><td>" + esc(f.name) + "</td><td>" + esc(humanSize(f.size)) + "</td><td>" + esc(filePurpose(f.name)) + "</td></tr>";
+      }
+      html += "</tbody><tfoot><tr><td>Total</td><td>" + esc(humanSize(totalBytes)) + "</td><td></td></tr></tfoot></table>";
+      const infoBox = $("dl-info");
+      infoBox.innerHTML = html;
+      infoBox.className = "info show " + (i.ok ? "ok" : "bad");
+      const tagId = i.id || i.name;
+      let tagsHtml =
+        "<span class=\"tag\">" + esc(tagId) + "</span> " +
+        "<span class=\"tag\">" + esc(i.model_type || "?") + "</span> " +
+        "<span class=\"tag\">" + esc(i.task || "?") + "</span> " +
+        "<span class=\"tag\">" + esc(i.total_gb ?? i.size_gb) + " GB</span> " +
+        "<span class=\"tag\">" + esc(i.license || "?") + "</span> ";
+      if (i.id && /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/.test(String(i.id))) {
+        tagsHtml += "<a class=\"hf-link\" href=\"https://huggingface.co/" + esc(i.id) + "\" target=\"_blank\" rel=\"noopener noreferrer\">Hugging Face <sup>↗</sup></a>";
+      }
+      $("dl-tags").innerHTML = tagsHtml;
+      $("dl-tags").hidden = false;
+    } else {
+      setInfo("dl-info",
+        `Local model: ${i.name}\nmodel_type: ${i.model_type} · task: ${i.task} · size: ${i.size_gb} GB` +
+        (i.is_quantized ? "\n⚠ already quantized (not convertible)" : "") +
+        (i.is_ov ? "\n⚠ already an OpenVINO model" : "") +
+        (i.is_gguf ? "\n⚠ GGUF file (not convertible)" : ""),
+        i.ok ? "ok" : "bad");
+      $("dl-tags").innerHTML = "";
+      $("dl-tags").hidden = true;
+    }
     updateDirLink();
     state.dlNeededBytes = i.size_bytes;
   } else {
