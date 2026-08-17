@@ -158,6 +158,20 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .card.pending { background: #fdf9ec; border-color: #e6c76a; }
 .banner.neutral { background: var(--bg); border-color: var(--line); color: var(--muted); }
 
+.resources { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
+.res-row { display: flex; align-items: center; gap: 10px; font-size: 12.5px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 0; }
+.res-row .res-name { flex: 0 0 96px; font-weight: 700; }
+.res-row .res-body { flex: 1 1 auto; color: var(--muted); white-space: pre-wrap; }
+.res-row.state-ok { background: #eff7f2; border-color: var(--mint-2); }
+.res-row.state-warn { background: #fdf6e3; border-color: #e6c76a; }
+.res-row.state-fail { background: #fbefef; border-color: var(--err); }
+.res-row.state-unknown { background: var(--bg); border-color: var(--line); }
+.res-row .res-dot { width: 9px; height: 9px; border-radius: 50%; flex: 0 0 auto; }
+.res-row.state-ok .res-dot { background: var(--ok); }
+.res-row.state-warn .res-dot { background: var(--warn); }
+.res-row.state-fail .res-dot { background: var(--err); }
+.res-row.state-unknown .res-dot { background: #ccc; }
+
 #dl-hash-card { border-top: 4px dashed #f2fbf6; margin-top: -14px; }
 #dl-hash-card[hidden] { display: none; }
 

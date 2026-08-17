@@ -56,6 +56,7 @@ T:\tools\ov-converter\
 │   ├── modes.py          dynamic NNCF mode list + per-mode self-test
 │   ├── versions.py       versions of key libraries
 │   ├── checks.py         disk / virtual-memory(pagefile) / param validation
+│   ├── resources.py      pre-download resource feasibility (disk/RAM per stage)
 │   ├── hf.py             HF link parsing, validate, download, local_check, verify_hashes
 │   ├── scan.py           local model scanner (excludes GGUF/OV/quantized)
 │   ├── export.py         dense fp16 OpenVINO export via optimum-cli + submodel listing
@@ -149,6 +150,14 @@ conda envs. `settings.env_script(name)` resolves CLI scripts (e.g. `optimum-cli.
   `{ok, is_vlm, prompt, output, tokens, elapsed_s, tok_per_s}`.
 - **checks.py** — `disk_free/disk_check`, `virtual_memory()` (Windows `GlobalMemoryStatusEx`
   incl. pagefile), `ram_check`, params estimates, `validate_convert(mode, group_size, ...)`.
+- **resources.py** — pre-download resource feasibility: `analyze(params, size_bytes,
+  mode_bits, download_path, output_path)` returns per-stage (`download`/`convert`/`compress`)
+  disk + RAM estimates vs. actual availability — disk free on the target drive (resolved via
+  an ancestor walk, so not-yet-created folders work) and virtual memory incl. pagefile via
+  `checks.virtual_memory()`. Each stage dict carries `state` in `ok|warn|fail|unknown`
+  (with `ok`, `need_disk_gb`/`free_disk_gb`/`need_ram_gb`/`avail_ram_gb`/`result_gb`/
+  `estimated`/`issue`) and `overall` is the worst-state verdict. When params are unknown
+  they are estimated from size (`size_bytes/2`, bf16 assumption; `estimated_params=true`).
 - **modes.py** — `list_modes()` from `nncf.CompressWeightsMode` + curated OV map;
   `self_test_all()` runs a tiny compress+compile per mode.
 - **naming.py** — `output_name(base, mode)`, `intermediate_name`, `output_dir/intermediate_dir`.
@@ -198,7 +207,8 @@ API routes:
 | `/api/modes/self-test` | POST | run per-mode compress+compile on a tiny model |
 | `/api/models` | GET | `{sources, converted}` from `scan` |
 | `/api/model/estimate` | POST `{path}` | size_gb + params |
-| `/api/hf/validate` | POST `{text, token}` | parse → local `detect_local` or HF `validate_model_id`; `{kind, info}` |
+| `/api/resources` | POST `{params, size_bytes, mode_bits, download_path, output_path}` | `{resources: analyze(...)}` — reusable resource estimate (e.g. Convert tab) |
+| `/api/hf/validate` | POST `{text, token, dest?}` | parse → local `detect_local` or HF `validate_model_id`; `{kind, info}`; on ok `info.resources = resources.analyze(params, size_bytes, download_path=dest)` |
 | `/api/model/local-check` | POST `{path, files}` | `local_check` (per-file presence) |
 | `/api/model/verify-hash` | POST `{path, files}` | NDJSON stream: `start/file/done` (sha256/size) |
 | `/api/disk` | GET `?path=` | walks up to the nearest existing ancestor, then `shutil.disk_usage` → free_gb/total_gb; returns `resolved_path` |
@@ -243,6 +253,23 @@ detected task is not among its `supported_tasks`; `support unknown`; or
 `support check unavailable (environment)` when the registry could not be built. Both card and
 badge are reset on every re-validate. `validateHfEnv()` falls back to probing the drive root
 built from the drive letter without a duplicated colon (`drive.replace(/:$/, "")` + separator).
+
+The Options card (`#dl-options-card`) is color-coded by cache-env validation
+(`validateHfEnv()` + `applyOptions()`): green `.card.done` when the env is OK; yellow
+`.card.pending` when the base folder is missing but its drive is reachable (`Missing folder
+— use "Create now?"`, with a "Create now?" button that calls `/api/mkdir`); red `.card.bad`
+when the base path is empty/invalid, the drive is absent/offline, free space is insufficient
+(<10 GB), the disk check errors, or the HF token in `#dl-token` does not start with `hf_`.
+The `#hf-env-res` banner always shows the exact reason; typing in `#dl-token` re-runs the
+combined check locally (`applyOptions`, no network).
+
+The Resources check card (`#dl-resources-card` / `#dl-resources`, shown after a successful
+validate via `renderResources`) lists three `.res-row`s — Download / Convert / Compress —
+each colored by its stage state (`.state-ok` green, `.state-warn` yellow, `.state-fail`
+red, `.state-unknown` grey) with a status dot, the needed vs. available disk/RAM
+(`resRowText`) and the stage `issue`. `updateDlChecks()` disables the Download button
+(`#dl-run`) whenever any stage state is `fail` and appends an extra
+`Resources: NOT ENOUGH — see Resources check above.` line to `#dl-disk`.
 
 `app.js` state object holds: `info, modes, sources, converted, dlInfo, cvInfo,
 currentMode, currentTask, taskActive, taskKind, dlFiles, dlSelected (Set), dlNeededBytes,
@@ -336,6 +363,9 @@ python -m ov_converter.pipeline logs\some_config.json
 - Architecture-support check: verify via `support.check_support` under `openvino-latest`
   (e.g. `("llama", "text-generation")` → `supported`, `("qwen3_5", "text-generation")` →
   `task_mismatch`), plus `node --check webui/static/app.js`.
+- Resource analysis: verify via `resources.analyze(...)` under `openvino-latest` (e.g.
+  `analyze(params=1e9, size_bytes=2e9)` → `convert.need_disk_gb` 4.5,
+  `compress.result_gb` 0.5), plus `node --check webui/static/app.js`.
 
 ## 10. Commit conventions
 

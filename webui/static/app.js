@@ -5,8 +5,8 @@ const $ = (id) => document.getElementById(id);
 const state = {
   info: null, modes: [], sources: [], converted: [],
   dlInfo: null, cvInfo: null, currentMode: null, currentTask: null,
-  taskActive: false, taskKind: null, dlFiles: null, dlSelected: null, dlLocalComplete: null,
-  validatedSub: null, dlSubDirty: false, validating: false, drives: [],
+  taskActive: false, taskKind: null, dlFiles: null, dlSelected: null, dlLocalComplete: null, dlResources: null,
+  validatedSub: null, dlSubDirty: false, validating: false, drives: [], hfEnvState: null,
 };
 let activeProgressId = null;
 let dlLocalDebounce = null;
@@ -20,6 +20,7 @@ function el(tag, cls, text) {
   return n;
 }
 function gb(bytes) { return (bytes / 1e9).toFixed(1); }
+function fmtGb(v) { return v == null ? "—" : (Number(v) || 0).toFixed(1) + " GB"; }
 function humanSize(bytes) {
   const b = Number(bytes) || 0;
   if (b >= 1e9) return (b / 1e9).toFixed(2) + " GB";
@@ -157,6 +158,22 @@ function syncHfBaseFromDrive() {
   if (!newDrive) return;
   $("hf-base").value = $("hf-base").value.trim().replace(/^[A-Za-z]:[\\/]/, "").replace(/^[\\/]+/, "");
 }
+function applyOptions() {
+  const card = $("dl-options-card");
+  const res = $("hf-env-res");
+  if (!card || !res) return;
+  card.classList.remove("done", "pending", "bad");
+  const env = state.hfEnvState || { cls: "", msg: "" };
+  const token = ($("dl-token").value || "").trim();
+  const tokenBad = token !== "" && !/^hf_[A-Za-z0-9_]+$/.test(token);
+  let cls = env.cls;
+  let msg = env.msg;
+  if (tokenBad) { cls = "bad"; msg = "HF token looks invalid — should start with hf_ (gated models will fail to download)."; }
+  const cardCls = cls === "bad" ? "bad" : cls === "warn" ? "pending" : cls === "ok" ? "done" : "";
+  if (cardCls) card.classList.add(cardCls);
+  res.className = "banner show " + (cls || "neutral");
+  res.textContent = msg;
+}
 async function validateHfEnv() {
   const res = $("hf-env-res");
   if (!res) return;
@@ -166,8 +183,8 @@ async function validateHfEnv() {
   const driveRoot = (drive === "/" || drive === "?") ? drive : drive.replace(/:$/, "") + osSep();
   const driveLabel = drive.replace(/:$/, "");
   if (!base || !/^[A-Za-z]:[\\/]/.test(base) && !(osSep() === "/" && base.startsWith("/"))) {
-    res.className = "banner show bad";
-    res.textContent = base ? "Invalid base path" : "HF base path is empty";
+    state.hfEnvState = { cls: "bad", msg: base ? "Invalid base path" : "HF base path is empty" };
+    applyOptions();
     return;
   }
   const hf = updateHfDerived();
@@ -179,8 +196,8 @@ async function validateHfEnv() {
         try { driveOk = (await api("/api/disk?path=" + encodeURIComponent(driveRoot))).ok === true; } catch (e) {}
       }
       if (!driveOk) {
-        res.className = "banner show bad";
-        res.textContent = "Insufficient disk (invalid drive)";
+        state.hfEnvState = { cls: "bad", msg: "Insufficient disk (invalid drive)" };
+        applyOptions();
         return;
       }
       const group = $("hf-base").closest(".root-group");
@@ -198,21 +215,21 @@ async function validateHfEnv() {
         };
         group.appendChild(create);
       }
-      res.className = "banner show bad";
-      res.textContent = 'Missing folder — use "Create now?"';
+      state.hfEnvState = { cls: "warn", msg: 'Missing folder — use "Create now?"' };
+      applyOptions();
       return;
     }
     const free = Number(r.free_gb) || 0;
     if (free < 10) {
-      res.className = "banner show bad";
-      res.textContent = "Insufficient disk (" + free.toFixed(1) + " GB free on cache drive)";
+      state.hfEnvState = { cls: "bad", msg: "Insufficient disk (" + free.toFixed(1) + " GB free on cache drive)" };
+      applyOptions();
       return;
     }
-    res.className = "banner show ok";
-    res.textContent = "HF paths OK — drive " + driveLabel + ": has " + free.toFixed(1) + " GB free\nHF_HOME=" + hf.home + "\nHF_HUB_CACHE=" + hf.hub;
+    state.hfEnvState = { cls: "ok", msg: "HF paths OK — drive " + driveLabel + ": has " + free.toFixed(1) + " GB free\nHF_HOME=" + hf.home + "\nHF_HUB_CACHE=" + hf.hub };
+    applyOptions();
   } catch (e) {
-    res.className = "banner show bad";
-    res.textContent = "Error checking cache disk: " + e.message;
+    state.hfEnvState = { cls: "bad", msg: "Error checking cache disk: " + e.message };
+    applyOptions();
   }
 }
 
@@ -284,6 +301,7 @@ function bindEvents() {
     hfEnvDebounce = setTimeout(validateHfEnv, 300);
   };
   $("hf-base").addEventListener("input", onHfEnvInput);
+  $("dl-token").addEventListener("input", applyOptions);
   $("hf-drive").addEventListener("change", () => {
     syncHfBaseFromDrive();
     updateHfDerived();
@@ -346,6 +364,8 @@ async function validateDownload() {
     if ($("dl-local")) { $("dl-local").className = "banner"; $("dl-local").textContent = ""; }
     if ($("dl-hashres")) { $("dl-hashres").textContent = ""; $("dl-hashres").className = "checkline"; }
     if ($("dl-hash-card")) $("dl-hash-card").hidden = true;
+    if ($("dl-resources-card")) { $("dl-resources-card").hidden = true; }
+    state.dlResources = null;
     state.dlFiles = null;
     state.dlSelected = null;
     state.dlLocalComplete = null;
@@ -466,6 +486,52 @@ function renderSupportBadge(i) {
     box.appendChild(chip);
   }
 }
+function renderResources(i) {
+  const card = $("dl-resources-card");
+  const box = $("dl-resources");
+  if (!card || !box) return;
+  const r = i && i.resources;
+  if (!r || !r.stages) { card.hidden = true; box.innerHTML = ""; state.dlResources = null; return; }
+  card.hidden = false;
+  state.dlResources = r;
+  box.innerHTML = "";
+  const names = { download: "Download", convert: "Convert", compress: "Compress" };
+  for (const key of ["download", "convert", "compress"]) {
+    const s = r.stages[key];
+    const row = el("div", "res-row state-" + (s.state || "unknown"), "");
+    row.appendChild(el("span", "res-dot"));
+    row.appendChild(el("span", "res-name", names[key]));
+    const body = el("span", "res-body", "");
+    body.textContent = resRowText(key, s);
+    row.appendChild(body);
+    box.appendChild(row);
+  }
+}
+function resRowText(key, s) {
+  const fd = fmtGb(s.free_disk_gb);
+  const fr = fmtGb(s.avail_ram_gb);
+  const need = fmtGb(s.need_disk_gb);
+  const ram = fmtGb(s.need_ram_gb);
+  const verdict = s.state === "fail" ? "NOT ENOUGH" : s.state === "warn" ? "tight/estimated" : s.state === "ok" ? "OK" : "unknown";
+  let t;
+  if (key === "download") {
+    if (s.state === "fail") t = "Need " + need + " disk, only " + fd + " free — NOT ENOUGH";
+    else if (s.state === "warn") t = "Need " + need + " disk, " + fd + " free (tight)";
+    else if (s.state === "ok") t = "Need " + need + " disk, " + fd + " free — OK";
+    else t = "size unknown — cannot estimate";
+  } else {
+    t = (key === "compress" ? "result ≈ " + fmtGb(s.result_gb) + " — " : "") +
+      "Need ~" + need + " disk + ~" + ram + " RAM — free " + fd + " / avail " + fr + " (" + verdict + ")";
+    if (s.state === "fail") {
+      const parts = [];
+      if (s.need_disk_gb != null && s.free_disk_gb != null && Number(s.free_disk_gb) < Number(s.need_disk_gb)) parts.push("DISK: need " + need + " free " + fd);
+      if (s.need_ram_gb != null && s.avail_ram_gb != null && Number(s.avail_ram_gb) < Number(s.need_ram_gb)) parts.push("RAM: need " + ram + " avail " + fr);
+      if (parts.length) t += " " + parts.join(" ");
+    }
+  }
+  if (s.issue) t += " — " + s.issue;
+  return t;
+}
 function renderDlInfo(res) {
   const i = res.info;
   if (!i || i.ok === false) {
@@ -486,6 +552,8 @@ function renderDlInfo(res) {
     const mc = $("dl-model-card");
     if (mc) mc.classList.remove("done", "bad", "pending");
     $("dl-hash-card").hidden = true;
+    if ($("dl-resources-card")) { $("dl-resources-card").hidden = true; }
+    state.dlResources = null;
     updateDirLink();
     updateDlChecks();
     return;
@@ -530,6 +598,7 @@ function renderDlInfo(res) {
       $("dl-tags").hidden = true;
     }
     renderSupportBadge(i);
+    renderResources(i);
     updateDirLink();
     state.dlNeededBytes = i.size_bytes;
   } else {
@@ -575,6 +644,7 @@ function renderDlInfo(res) {
     state.dlFiles = i.files || [];
     renderFilePicker(i.files_meta || []);
     renderSupportBadge(i);
+    renderResources(i);
   }
 }
 function osSep() { return ((navigator.platform || "") + " " + (navigator.userAgent || "")).indexOf("Win") !== -1 ? "\\" : "/"; }
@@ -764,13 +834,17 @@ function updateDlChecks() {
   const needed = selBytes * 1.05;
   const free = (state.info.disk_free_gb || 0) * 1e9;
   const okDisk = free >= needed;
+  const resFail = !!(state.dlResources && Object.values(state.dlResources.stages).some((s) => s.state === "fail"));
   $("dl-disk").innerHTML = "";
   $("dl-disk").appendChild(el("div", okDisk ? "banner show ok" : "banner show bad",
     okDisk ? `Disk: OK (free ${gb(free)} GB ≥ needed ${gb(needed)} GB)` : `Disk: NOT ENOUGH (free ${gb(free)} GB < needed ${gb(needed)} GB)`));
+  if (resFail) {
+    $("dl-disk").appendChild(el("div", "banner show bad", "Resources: NOT ENOUGH — see Resources check above."));
+  }
   const dlBtn = $("dl-run");
   const hasSel = state.dlSelected && state.dlSelected.size > 0;
   const blocked = state.dlSubDirty === true;
-  dlBtn.disabled = !(okDisk && i.kind === "hf" && i.info.ok && state.dlLocalComplete === false && hasSel && subOk && !blocked);
+  dlBtn.disabled = !(okDisk && !resFail && i.kind === "hf" && i.info.ok && state.dlLocalComplete === false && hasSel && subOk && !blocked);
 }
 async function runDownload() {
   if (!state.dlInfo || state.dlInfo.kind !== "hf") return;

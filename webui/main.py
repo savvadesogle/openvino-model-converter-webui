@@ -31,6 +31,7 @@ app = FastAPI(title="OpenVINO Model Converter")
 class HfValidateIn(BaseModel):
     text: str
     token: str | None = None
+    dest: str | None = None
 
 
 class DownloadIn(BaseModel):
@@ -69,6 +70,14 @@ class ConvertIn(BaseModel):
 
 class OpenDirIn(BaseModel):
     path: str
+
+
+class ResourcesIn(BaseModel):
+    params: int | None = None
+    size_bytes: int = 0
+    mode_bits: int | None = None
+    download_path: str | None = None
+    output_path: str | None = None
 
 
 class VerifyHashIn(BaseModel):
@@ -182,18 +191,37 @@ def api_estimate(body: EstimateIn):
     }
 
 
+@app.post("/api/resources")
+def api_resources(body: ResourcesIn):
+    from ov_converter import resources
+    return {"resources": resources.analyze(
+        params=body.params, size_bytes=body.size_bytes, mode_bits=body.mode_bits,
+        download_path=body.download_path, output_path=body.output_path)}
+
+
 @app.post("/api/hf/validate")
 def api_hf_validate(body: HfValidateIn):
     import os
     from ov_converter.hf import is_local_path
     lp = is_local_path(body.text)
     if lp is not None:
-        return {"kind": "local", "info": __import__("ov_converter.hf", fromlist=["x"]).detect_local(lp)}
-    local = parse_hf_id(body.text)
-    if not local:
-        raise HTTPException(400, "Not a valid HF model id or local path.")
-    token = (body.token or "").strip() or os.environ.get("HF_TOKEN") or None
-    return {"kind": "hf", "info": validate_model_id(local, token)}
+        kind = "local"
+        info = __import__("ov_converter.hf", fromlist=["x"]).detect_local(lp)
+    else:
+        local = parse_hf_id(body.text)
+        if not local:
+            raise HTTPException(400, "Not a valid HF model id or local path.")
+        token = (body.token or "").strip() or os.environ.get("HF_TOKEN") or None
+        kind = "hf"
+        info = validate_model_id(local, token)
+    if info.get("ok"):
+        from ov_converter import resources
+        info["resources"] = resources.analyze(
+            params=info.get("params"),
+            size_bytes=info.get("size_bytes") or info.get("total_bytes") or 0,
+            download_path=body.dest or None,
+        )
+    return {"kind": kind, "info": info}
 
 
 class LocalCheckIn(BaseModel):

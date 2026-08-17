@@ -37,7 +37,7 @@
     <div id="dl-info" class="info"></div>
   </div>
 
-  <div class="card">
+  <div class="card" id="dl-options-card">
     <h2>Options</h2>
     <h3>Hugging Face</h3>
     <div class="grid">
@@ -69,6 +69,12 @@
     <div id="dl-files" class="filelist"></div>
     <div id="dl-disk" class="checkline"></div>
     <div class="row"><button id="dl-run" class="primary" disabled>Download</button><span class="spinner" id="dl-spinner" hidden></span><div class="progress" id="dl-progress"><div class="fill"></div></div><button id="dl-cancel" class="danger" hidden>Cancel</button></div>
+  </div>
+
+  <div class="card" id="dl-resources-card" hidden>
+    <h2>Resources check</h2>
+    <p class="desc">Estimated disk &amp; RAM for download → convert → compress. The Download button stays disabled while any stage cannot be satisfied.</p>
+    <div id="dl-resources" class="resources"></div>
   </div>
 
   <div class="card" id="dl-hash-card" hidden>
