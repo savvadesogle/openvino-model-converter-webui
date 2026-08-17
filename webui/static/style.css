@@ -56,6 +56,7 @@ main { display: flex; flex-direction: column; gap: 14px; max-width: 1000px; }
 .card h3 { margin: 14px 0 6px; font-size: 12.5px; text-transform: uppercase; letter-spacing: .4px; color: var(--muted); }
 .card h3:first-child { margin-top: 0; }
 .card.done { background: #f2fbf6; border-color: var(--mint-2); }
+.card.bad { background: #fbefef; border: 1px solid var(--err); }
 .desc, .hint { margin: 0 0 10px; color: var(--muted); font-size: 12.5px; }
 
 .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
@@ -162,6 +163,9 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 
 .tags { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; align-items: center; }
 .tag { background: #efeaf9; color: #5a4f86; border-radius: 999px; padding: 2px 10px; font-size: 12px; font-weight: 600; }
+.tag.support-ok { background: var(--mint); color: #2f6b4d; }
+.tag.support-bad { background: var(--peach); color: #a05a3a; }
+.tag.support-unknown { background: var(--bg); color: var(--muted); }
 .tag-link { cursor: pointer; }
 .tag-link:hover { background: #e3dcf7; }
 .tag-link:active { background: #d9d4ef; }

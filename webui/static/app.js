@@ -163,6 +163,8 @@ async function validateHfEnv() {
   document.querySelectorAll(".create-btn").forEach((b) => b.remove());
   const base = composeHfBase().trim();
   const drive = (base.match(/^([A-Za-z]:)/) || [])[1] || (osSep() === "/" ? "/" : "?");
+  const driveRoot = (drive === "/" || drive === "?") ? drive : drive.replace(/:$/, "") + osSep();
+  const driveLabel = drive.replace(/:$/, "");
   if (!base || !/^[A-Za-z]:[\\/]/.test(base) && !(osSep() === "/" && base.startsWith("/"))) {
     res.className = "banner show bad";
     res.textContent = base ? "Invalid base path" : "HF base path is empty";
@@ -174,7 +176,7 @@ async function validateHfEnv() {
     if (r.ok === false) {
       let driveOk = false;
       if (drive !== "?") {
-        try { driveOk = (await api("/api/disk?path=" + encodeURIComponent(drive + ":\\"))).ok === true; } catch (e) {}
+        try { driveOk = (await api("/api/disk?path=" + encodeURIComponent(driveRoot))).ok === true; } catch (e) {}
       }
       if (!driveOk) {
         res.className = "banner show bad";
@@ -207,7 +209,7 @@ async function validateHfEnv() {
       return;
     }
     res.className = "banner show ok";
-    res.textContent = "HF paths OK — drive " + drive + ": has " + free.toFixed(1) + " GB free\nHF_HOME=" + hf.home + "\nHF_HUB_CACHE=" + hf.hub;
+    res.textContent = "HF paths OK — drive " + driveLabel + ": has " + free.toFixed(1) + " GB free\nHF_HOME=" + hf.home + "\nHF_HUB_CACHE=" + hf.hub;
   } catch (e) {
     res.className = "banner show bad";
     res.textContent = "Error checking cache disk: " + e.message;
@@ -336,6 +338,9 @@ async function validateDownload() {
   $("dl-validate").disabled = true;
   try {
     if ($("dl-tags")) { $("dl-tags").innerHTML = ""; $("dl-tags").hidden = true; }
+    if ($("dl-support")) { $("dl-support").innerHTML = ""; }
+    const mc = $("dl-model-card");
+    if (mc) mc.classList.remove("done", "bad", "pending");
     if ($("dl-info")) { $("dl-info").innerHTML = ""; $("dl-info").className = "info"; }
     if ($("dl-files")) { $("dl-files").innerHTML = ""; $("dl-files").classList.remove("show"); }
     if ($("dl-local")) { $("dl-local").className = "banner"; $("dl-local").textContent = ""; }
@@ -429,6 +434,38 @@ function setFilesAll(value) {
   });
   updateDlChecks();
 }
+function renderSupportBadge(i) {
+  const card = $("dl-model-card");
+  const box = $("dl-support");
+  if (!box) return;
+  box.innerHTML = "";
+  if (card) card.classList.remove("done", "bad", "pending");
+  const s = i && i.support;
+  if (!s) return;
+  const chip = el("span", "tag", "");
+  if (s.state === "supported" || s.state === "task_mismatch") {
+    chip.className = "tag support-ok";
+    chip.textContent = "✓ SUPPORTED" + (s.model_type ? "  (" + s.model_type + ")" : "");
+    box.appendChild(chip);
+    if (card) card.classList.add("done");
+    if (s.state === "task_mismatch") {
+      const note = el("span", "tag", "");
+      note.style.background = "#fdf6e3";
+      note.style.color = "#8a6d1a";
+      note.textContent = "⚠ task \u201c" + (s.task || "?") + "\u201d not among supported tasks for this arch — supported: " + ((s.supported_tasks || []).join(", "));
+      box.appendChild(note);
+    }
+  } else if (s.state === "unsupported") {
+    chip.className = "tag support-bad";
+    chip.textContent = "✕ NOT SUPPORTED" + (s.model_type ? "  (" + s.model_type + ")" : "");
+    box.appendChild(chip);
+    if (card) card.classList.add("bad");
+  } else {
+    chip.className = "tag support-unknown";
+    chip.textContent = "support unknown";
+    box.appendChild(chip);
+  }
+}
 function renderDlInfo(res) {
   const i = res.info;
   if (!i || i.ok === false) {
@@ -445,6 +482,9 @@ function renderDlInfo(res) {
     setSelectBtns();
     $("dl-tags").innerHTML = "";
     $("dl-tags").hidden = true;
+    if ($("dl-support")) { $("dl-support").innerHTML = ""; }
+    const mc = $("dl-model-card");
+    if (mc) mc.classList.remove("done", "bad", "pending");
     $("dl-hash-card").hidden = true;
     updateDirLink();
     updateDlChecks();
@@ -489,6 +529,7 @@ function renderDlInfo(res) {
       $("dl-tags").innerHTML = "";
       $("dl-tags").hidden = true;
     }
+    renderSupportBadge(i);
     updateDirLink();
     state.dlNeededBytes = i.size_bytes;
   } else {
@@ -533,6 +574,7 @@ function renderDlInfo(res) {
     state.dlNeededBytes = i.total_bytes;
     state.dlFiles = i.files || [];
     renderFilePicker(i.files_meta || []);
+    renderSupportBadge(i);
   }
 }
 function osSep() { return ((navigator.platform || "") + " " + (navigator.userAgent || "")).indexOf("Win") !== -1 ? "\\" : "/"; }

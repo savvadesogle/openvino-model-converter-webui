@@ -25,7 +25,7 @@
 <!-- ============================================================ DOWNLOAD -->
 <section id="panel-download" class="panel active">
 
-  <div class="card">
+  <div class="card" id="dl-model-card">
     <h2>Model</h2>
     <p class="desc">Paste a Hugging Face link, a bare model id like <code class="fill-link" data-fill="Qwen/Qwen3.5-0.8B">Qwen/Qwen3.5-0.8B</code>, or a local path. The tool validates it before downloading.</p>
     <div class="row">
@@ -33,6 +33,7 @@
       <button id="dl-validate" class="secondary">Validate</button>
     </div>
     <div id="dl-tags" class="tags"></div>
+    <div id="dl-support" class="tags"></div>
     <div id="dl-info" class="info"></div>
   </div>
 

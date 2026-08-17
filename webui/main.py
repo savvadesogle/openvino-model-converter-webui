@@ -15,11 +15,13 @@ from pydantic import BaseModel
 import ov_converter.settings as S
 from ov_converter import checks, modes, naming, scan, versions
 from ov_converter.hf import parse_hf_id, validate_model_id
+from ov_converter import support as ov_support
 
 from webui.tasks import manager
 
 S.apply_env()
 S.ensure_dirs()
+ov_support.warm_start()
 
 STATIC = Path(__file__).parent / "static"
 app = FastAPI(title="OpenVINO Model Converter")
@@ -74,10 +76,6 @@ class VerifyHashIn(BaseModel):
     files: list[dict] = []
 
 
-class MkdirIn(BaseModel):
-    path: str
-
-
 @app.get("/")
 def index():
     return FileResponse(STATIC / "index.html")
@@ -96,6 +94,7 @@ def info():
         "disk_free_gb": round(free / 1e9, 1),
         "virtual_memory": checks.virtual_memory(),
         "versions": versions.versions(),
+        "support": {"ready": ov_support.is_ready(), "count": len(ov_support.get_supported() or {})},
     }
 
 
@@ -103,7 +102,15 @@ def info():
 def api_drives():
     import os
     if os.name == "nt":
-        drives = [f"{c}:\\" for c in string.ascii_uppercase if os.path.exists(f"{c}:\\")]
+        try:
+            import ctypes
+            mask = ctypes.windll.kernel32.GetLogicalDrives()
+        except Exception:  # noqa: BLE001
+            mask = 0
+        if mask:
+            drives = [f"{string.ascii_uppercase[i]}:\\" for i in range(26) if mask & (1 << i)]
+        else:
+            drives = [f"{c}:\\" for c in string.ascii_uppercase if os.path.exists(f"{c}:\\")]
     else:
         drives = ["/"]
     return {"drives": drives}
@@ -120,19 +127,26 @@ class MkdirIn(BaseModel):
 
 @app.post("/api/mkdir")
 def api_mkdir(body: MkdirIn):
-    r"""Create a directory, but ONLY under the configured models root (T:\models).
+    r"""Create a directory under any local drive (Windows) or any absolute path (non-Windows).
 
-    Guards against accidental writes to other drives / network shares.
+    Refuses UNC / network paths and relative paths.
     """
+    import os
     from pathlib import Path
 
     p = Path(body.path)
+    raw = body.path
     try:
-        resolved = p.expanduser().resolve(strict=False)
-        root = S.MODELS_ROOT.expanduser().resolve(strict=False)
-        if not resolved.is_relative_to(root):
-            return {"ok": False,
-                    "error": f"refusing to create a directory outside {S.MODELS_ROOT}"}
+        if not raw or not raw.strip():
+            return {"ok": False, "error": "path is required"}
+        if os.name == "nt":
+            if not Path(raw).drive:
+                return {"ok": False, "error": "path must be an absolute path with a drive letter"}
+            if raw.startswith("\\\\") and not raw.startswith("\\\\?\\"):
+                return {"ok": False, "error": "UNC / network paths are not supported"}
+        else:
+            if not Path(raw).is_absolute():
+                return {"ok": False, "error": "path must be absolute"}
         p.mkdir(parents=True, exist_ok=True)
         return {"ok": True, "path": str(p)}
     except Exception as e:  # noqa: BLE001
@@ -218,9 +232,15 @@ def api_disk(path: str = ""):
     if not path:
         return {"ok": False, "error": "path is required"}
     try:
-        t, u, f = shutil.disk_usage(path)
-        return {"ok": True, "path": path, "free_gb": round(f/1e9, 1), "total_gb": round(t/1e9, 1)}
-    except Exception as e:
+        resolved = Path(path).expanduser()
+        while not resolved.exists() and resolved != resolved.parent:
+            resolved = resolved.parent
+        if not resolved.exists():
+            return {"ok": False, "error": "path does not exist"}
+        t, u, f = shutil.disk_usage(resolved)
+        return {"ok": True, "path": path, "resolved_path": str(resolved),
+                "free_gb": round(f/1e9, 1), "total_gb": round(t/1e9, 1)}
+    except Exception as e:  # noqa: BLE001
         return {"ok": False, "error": str(e)}
 
 

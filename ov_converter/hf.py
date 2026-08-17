@@ -101,6 +101,12 @@ def validate_model_id(model_id: str, token: str | None = None) -> dict:
     local_size = sum((local_dir / f).stat().st_size
                      for f in local_names if (local_dir / f).is_file())
 
+    cfg = info.config if isinstance(info.config, dict) else {}
+    model_type = cfg.get("model_type")
+    task = task_from_config(cfg)
+    from ov_converter import support
+    support_res = support.check_support(model_type, task)
+
     return {
         "ok": True,
         "id": info.id,
@@ -120,6 +126,10 @@ def validate_model_id(model_id: str, token: str | None = None) -> dict:
         "local_complete": local_complete,
         "local_size_gb": round(local_size / 1e9, 2),
         "files_meta": files_meta,
+        "model_type": model_type,
+        "architectures": cfg.get("architectures"),
+        "task": task,
+        "support": support_res,
     }
 
 
@@ -199,6 +209,8 @@ def detect_local(model_dir: str | Path) -> dict:
         "params": checks.params_from_index(d),
         "id": m.group(0) if m else None,
         "license": license,
+        "support": __import__("ov_converter.support", fromlist=["x"]).check_support(
+            (cfg.get("model_type") if cfg else None), task),
         "files": files,
         "files_meta": files_meta,
         "total_bytes": total_bytes,
