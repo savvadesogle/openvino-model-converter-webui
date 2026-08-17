@@ -462,7 +462,7 @@ function renderSupportBadge(i) {
     if (card) card.classList.add("bad");
   } else {
     chip.className = "tag support-unknown";
-    chip.textContent = "support unknown";
+    chip.textContent = s.ok === false ? "support check unavailable (environment)" : "support unknown";
     box.appendChild(chip);
   }
 }

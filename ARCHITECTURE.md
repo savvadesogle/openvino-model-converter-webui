@@ -50,6 +50,8 @@ T:\tools\ov-converter\
 ├── docs/screenshot.png   UI screenshot used in README
 ├── ov_converter/         reusable core (no UI) — importable, "microservice" modules
 │   ├── settings.py       paths, env (HF cache on disk), python-env resolution
+│   ├── support.py        runtime OV architecture-support registry (background subprocess + disk cache)
+│   ├── _support_probe.py subprocess entry that builds the support registry + disk cache
 │   ├── naming.py         output naming: <Base>-<mode>-ov
 │   ├── modes.py          dynamic NNCF mode list + per-mode self-test
 │   ├── versions.py       versions of key libraries
@@ -72,7 +74,8 @@ T:\tools\ov-converter\
         └── app.js        all frontend logic (state, fetch, SSE, stage chips)
 ```
 
-`logs/` holds task config JSON + uvicorn logs (gitignored).
+`logs/` holds task config JSON, uvicorn logs and the `ov_support.json` support-registry
+cache (all gitignored).
 
 ## 3. Paths, naming, environment
 
@@ -106,9 +109,10 @@ conda envs. `settings.env_script(name)` resolves CLI scripts (e.g. `optimum-cli.
     `https://huggingface.co/.../tree/main`, quotes/spaces → normalized `org/model`.
   - `validate_model_id(id, token) -> dict`: `model_info(files_metadata=True)` → `{ok, id, sha,
     pipeline_tag, tags, gated, license, files, total_bytes, total_gb, files_meta:[{name,size,sha256}],
-    local_* presence fields}`.
+    local_* presence fields, model_type, architectures, task, support}`.
   - `detect_local(path) -> dict`: local dir → same rich shape (files_meta, total_gb, license,
-    `id` from `_name_or_path` if present).
+    `id` from `_name_or_path` if present), plus `model_type`, `architectures`, `task`, `support`.
+  - In both, `support` is the verdict from `support.check_support(model_type, task)` (below).
   - `download(id, dest, *, revision, token, include_only, log, progress) -> int`: per-file
     `hf_hub_download` loop (progress callback), deletes `dest/.cache` afterwards; token falls
     back to `HF_TOKEN` env; returns 0/1.
@@ -117,6 +121,17 @@ conda envs. `settings.env_script(name)` resolves CLI scripts (e.g. `optimum-cli.
     `.git`) but keeps dot-FILES (`.gitattributes`).
   - `verify_hashes` / `verify_hashes_stream`: sha256 for LFS files, SIZE fallback for non-LFS
     (`method: "sha256"|"size"`), generator events `start/file/done`.
+- **support.py** — runtime registry of `model_type`s supported by the installed OpenVINO
+  exporter (from `optimum.exporters.tasks.TasksManager`, filtered to CLI-exportable types).
+  Built in a BACKGROUND daemon thread at server import via `warm_start()`; the heavy import
+  runs in a SUBPROCESS under `settings.resolve_python()` (`_support_probe.py`), so the web
+  server's own interpreter does not need optimum. Results cached to `logs/ov_support.json`
+  keyed by lib versions (optimum/optimum-intel/openvino/transformers/nncf/python) for fast
+  restart. Interface: `warm_start/is_ready/get_supported/last_error/check_support`;
+  `check_support(model_type, task)` returns `{ok, ready, state, model_type, task,
+  supported_tasks, reason}` with `state ∈ supported | task_mismatch | unsupported | unknown`.
+- **_support_probe.py** — subprocess entry that builds the registry + disk cache inside the
+  resolved env.
 - **scan.py** — walks `T:\models\<org>\<model>`; excludes `.cache`, `models--*`, `.*`,
   GGUF (has `*.gguf`), already-OV (has `openvino_model.xml`), quantized (config has
   `quantization_config`). Each record: name, model_type, task (from config: vision→
@@ -177,8 +192,8 @@ API routes:
 
 | Route | Method | Purpose |
 |---|---|---|
-| `/api/info` | GET | paths (cache/originals/output/project), disk_free_gb, virtual_memory, versions |
-| `/api/drives` | GET | available drive roots: `["T:\\","C:\\",...]` on Windows, `["/"]` elsewhere |
+| `/api/info` | GET | paths (cache/originals/output/project), disk_free_gb, virtual_memory, versions, support `{ready, count, error}` |
+| `/api/drives` | GET | available drive roots: on Windows via `GetLogicalDrives()` bitmask (falls back to an `os.path.exists` loop over A–Z), `["/"]` elsewhere |
 | `/api/modes` | GET | dynamic mode list |
 | `/api/modes/self-test` | POST | run per-mode compress+compile on a tiny model |
 | `/api/models` | GET | `{sources, converted}` from `scan` |
@@ -186,9 +201,9 @@ API routes:
 | `/api/hf/validate` | POST `{text, token}` | parse → local `detect_local` or HF `validate_model_id`; `{kind, info}` |
 | `/api/model/local-check` | POST `{path, files}` | `local_check` (per-file presence) |
 | `/api/model/verify-hash` | POST `{path, files}` | NDJSON stream: `start/file/done` (sha256/size) |
-| `/api/disk` | GET `?path=` | `shutil.disk_usage` → free_gb |
+| `/api/disk` | GET `?path=` | walks up to the nearest existing ancestor, then `shutil.disk_usage` → free_gb/total_gb; returns `resolved_path` |
 | `/api/open-dir` | POST `{path}` | `os.startfile` (opens Explorer) |
-| `/api/mkdir` | POST `{path}` | create dirs, **guarded to `MODELS_ROOT` only** (refuses other drives) |
+| `/api/mkdir` | POST `{path}` | create dirs under any local drive (Windows) / any absolute path (non-Windows); refuses UNC/network paths and relative paths |
 | `/api/download` | POST | start a download-only task (one at a time) |
 | `/api/convert` | POST | start a convert task |
 | `/api/task/cancel` | POST | cancel the running task |
@@ -219,6 +234,15 @@ cv-delete-int, cv-genai, cv-disk, cv-ram, cv-errors, cv-run, cv-spinner,
 cv-cancel, cv-progress, task-panel, task-status, task-collapse, task-stages/stages,
 task-log, task-cancel(STOP), task-clear, panel-download, panel-convert, dl-path-spinner
 (JS-created), hash-pct/hash-list (JS-created), create-btn-* (JS-created)`.
+
+The MODEL card is `#dl-model-card`; the architecture-support verdict renders into `#dl-support`
+via `renderSupportBadge()`: `✓ SUPPORTED (model_type)` (green `.tag.support-ok`, card turns
+`.card.done`) when supported; `✕ NOT SUPPORTED (model_type)` (`.tag.support-bad`, card turns
+`.card.bad`) when unsupported; an amber task-mismatch note when the arch is supported but the
+detected task is not among its `supported_tasks`; `support unknown`; or
+`support check unavailable (environment)` when the registry could not be built. Both card and
+badge are reset on every re-validate. `validateHfEnv()` falls back to probing the drive root
+built from the drive letter without a duplicated colon (`drive.replace(/:$/, "")` + separator).
 
 `app.js` state object holds: `info, modes, sources, converted, dlInfo, cvInfo,
 currentMode, currentTask, taskActive, taskKind, dlFiles, dlSelected (Set), dlNeededBytes,
@@ -269,13 +293,19 @@ Anything not starting with `@@` is treated as a raw log line.
    `settings.env_script(...)` — otherwise the wrong conda env gets picked up from PATH.
 3. **HF cache on disk**: `apply_env()` points `HF_HOME`/`HF_HUB_CACHE` to `MODELS_ROOT/.hf-cache`
    (all on `T:`). User can override per-task via `hf_home`/`hf_hub_cache`.
-4. **`/api/mkdir` is guarded** to `MODELS_ROOT` only (refuses other drives / network shares).
+4. **`/api/mkdir`** creates dirs under any local drive (Windows) / any absolute path
+   (non-Windows); it refuses UNC/network paths and relative paths.
 5. **GenAI VLM test**: pass images as `ov.Tensor` (numpy arrays), NOT file paths; console must
    use utf-8 (set `PYTHONIOENCODING=utf-8` when printing output).
 6. **Do not use `hf download --include`** (new CLI mis-handles it); use per-file
    `hf_hub_download` (the project's `hf.download`).
 7. **INT8 needs per-channel (`group_size=-1`)**; INT2/INT3 are symmetric-only;
    MXFP4/MXFP8 fixed group 32; `int2-mix`/`int3-mix` require a MoE model.
+8. **OV architecture-support registry**: computed in the `resolve_python()` env via a
+   subprocess (`_support_probe.py`), so the web server interpreter does not need `optimum`.
+   If the registry cannot be built, the UI shows "support check unavailable (environment)"
+   and `/api/info` `support.error` carries the reason. The cache lives at
+   `logs/ov_support.json` (gitignored). Conversions still require the resolved env.
 
 ## 8. How to run
 
@@ -303,6 +333,9 @@ python -m ov_converter.pipeline logs\some_config.json
   `create-btn-*`).
 - Suggested per-change checks: run the pipeline on the small `Qwen3.5-0.8B` (download →
   export fp16 → int2 → package → GenAI test) end to end.
+- Architecture-support check: verify via `support.check_support` under `openvino-latest`
+  (e.g. `("llama", "text-generation")` → `supported`, `("qwen3_5", "text-generation")` →
+  `task_mismatch`), plus `node --check webui/static/app.js`.
 
 ## 10. Commit conventions
 

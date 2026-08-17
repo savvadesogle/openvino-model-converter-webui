@@ -94,7 +94,11 @@ def info():
         "disk_free_gb": round(free / 1e9, 1),
         "virtual_memory": checks.virtual_memory(),
         "versions": versions.versions(),
-        "support": {"ready": ov_support.is_ready(), "count": len(ov_support.get_supported() or {})},
+        "support": {
+            "ready": ov_support.is_ready(),
+            "count": len(ov_support.get_supported() or {}),
+            "error": ov_support.last_error(),
+        },
     }
 
 
