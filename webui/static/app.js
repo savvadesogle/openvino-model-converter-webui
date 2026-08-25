@@ -63,7 +63,8 @@ async function api(url, opts) {
 
 /* ---------------------------------------------------------------- init */
 async function init() {
-  await Promise.all([loadInfo(), loadModes(), loadModels()]);
+  await loadInfo();
+  await Promise.all([loadModes(), loadModels()]);
   bindEvents();
   await loadDrives();
   loadHfDrives();
@@ -1287,7 +1288,7 @@ async function runSelfTest() {
 function updateCvName() {
   const base = currentBase();
   const mode = state.currentMode ? state.currentMode.id : "int4_sym";
-  const root = state.info.paths.output;
+  const root = state.info && state.info.paths ? state.info.paths.output : "";
   $("cv-outdir").value = `${root}\\${base}-${modeToken(mode)}-ov`;
 }
 function currentBase() {
@@ -1336,7 +1337,7 @@ function updateCvChecks() {
   wrap.innerHTML = "";
   if (!keep && !m) { $("cv-run").disabled = true; return; }
   const needs = estimateConvertNeeded(params, bits);
-  const free = (state.info.disk_free_gb || 0) * 1e9;
+  const free = ((state.info && state.info.disk_free_gb) || 0) * 1e9;
   const okDisk = free >= needs;
   const line = $("cv-disk");
   line.innerHTML = "";
@@ -1344,7 +1345,7 @@ function updateCvChecks() {
     okDisk ? `Disk: OK (free ${gb(free)} GB ≥ needed ~${gb(needs)} GB)` : `Disk: NOT ENOUGH (free ${gb(free)} GB < needed ~${gb(needs)} GB)`));
 
   const ramNeeded = params * 4 * 1.2;
-  const vm = state.info.virtual_memory;
+  const vm = state.info ? state.info.virtual_memory : null;
   const lineR = $("cv-ram");
   lineR.innerHTML = "";
   if (vm) {
