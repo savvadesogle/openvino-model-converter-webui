@@ -124,7 +124,14 @@ def _data_aware_kwargs(da: dict) -> dict:
         arr = np.load(dataset_path) if str(dataset_path).endswith(".npy") else None
         if arr is None:
             raise ValueError("dataset must be a .npy file of calibration inputs")
-        kwargs["dataset"] = Dataset([arr[:num_samples]])
+        n = int(num_samples)
+        n = max(1, min(n, len(arr)))
+        if arr.ndim == 1:
+            items = [np.array([v]) for v in arr[:n]]
+        else:
+            items = [arr[i] for i in range(n)]
+        kwargs["dataset"] = Dataset(items)
+        kwargs["subset_size"] = n
     for flag in ("awq", "scale_estimation", "gptq", "lora_correction"):
         if da.get(flag):
             kwargs[flag] = True

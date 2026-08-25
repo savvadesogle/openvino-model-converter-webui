@@ -163,7 +163,7 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .banner.ok { background: #eff7f2; border-color: var(--mint-2); color: #2f6b4d; }
 .banner.bad { background: #fbefef; border-color: var(--err); color: #a05a3a; }
 .banner.warn { background: #fdf6e3; border-color: #e6c76a; color: #8a6d1a; }
-.card.pending { background: #fdf9ec; border-color: #e6c76a; }
+.card.pending { background: #fdf9ec; border: 1px solid #e6c76a; }
 div.card.state-ok { background: #f2fbf6; }
 div.card.state-warn { background: #fdf9ec; }
 .banner.neutral { background: var(--bg); border-color: var(--line); color: var(--muted); }

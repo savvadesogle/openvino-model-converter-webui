@@ -99,7 +99,6 @@
     </div>
     <input id="cv-text" placeholder="... or paste a HF link / local path here">
     <div id="cv-meta" class="info"></div>
-    <div id="cv-tfreq" class="banner"></div>
     <label class="check"><input id="cv-download-first" type="checkbox"> Model not local? Paste the HF link in the field above and press Convert — you'll be sent to the Download tab to validate &amp; download it first.</label>
   </div>
 
@@ -109,6 +108,7 @@
     <div class="row">
       <select id="cv-task"></select>
     </div>
+    <div id="cv-tfreq" class="banner"></div>
   </div>
 
   <div class="card">
@@ -142,7 +142,7 @@
       </select><span class="help">Precision kept for layers that don't fit the target mode (safety fallback). 'none' = no backup.</span></label>
     </div>
     <div class="grid">
-      <label>Ratio <input id="cv-ratio" type="number" step="0.1" min="0" max="1" placeholder="1.0"><span class="help">Fraction of layers actually compressed in single-pass mixed precision (0..1).</span></label>
+      <label>Ratio <input id="cv-ratio" type="number" step="0.1" min="0" max="1" placeholder="1.0"><span class="help">Ratio = how much of the model stays at the chosen low precision (2/3/4 bits); the rest falls back to the Backup precision (INT8 by default). 1.0 = everything at the low precision &mdash; max compression, smallest file. 0.9 = ~90% of weights at the low precision, ~10% at backup INT8 &mdash; safer but slightly bigger; lower ratio &rarr; more accurate but larger. Applies to INT2/INT3/INT4 (mixed-precision modes in NNCF); NNCF picks which layers stay at the low precision by sensitivity. Not used for INT8 (always ratio 1) and ignored for int2-mix/int3-mix.</span></label>
       <label class="check" style="align-self:end"><input id="cv-all-layers" type="checkbox" checked> Compress all layers<span class="help">When checked, every compressible layer is quantized; uncheck to let NNCF pick only the sensitive ones.</span></label>
     </div>
   </div>
@@ -156,12 +156,13 @@
       <label class="check data-unsupported"><input id="cv-gptq" type="checkbox"> GPTQ</label>
       <label class="check data-unsupported"><input id="cv-lora" type="checkbox"> LoRA correction</label>
     </div>
+    <div class="help">AWQ, GPTQ and LoRA correction stay disabled until you enter a Calibration dataset path above &mdash; fill the dataset first, then tick the methods. Scale estimation works without a dataset. GPTQ and LoRA correction cannot be used together.</div>
     <div class="grid">
       <label>Calibration dataset (.npy) <input id="cv-dataset" placeholder="path/to/inputs.npy"></label>
-      <label>Num samples <input id="cv-nsamples" type="number" value="128"></label>
+      <label>Num samples <input id="cv-nsamples" type="number" value="128" min="1" step="1"></label>
     </div>
     <div class="help">Number of calibration input samples (rows of the .npy array) NNCF uses for data-aware calibration. Higher = slower but better-calibrated compression. Typical range 16-256; 128 is a good default. Must not exceed the number of rows in the .npy file.</div>
-    <div class="help">Path to a .npy file containing a single numpy array of input tensors for calibration — shape (N, ...) where N is the number of samples and the rest is one model input. You can build it by running your model on sample prompts and saving the input tensor(s) with <code>numpy.save('inputs.npy', arr)</code>. Must be a .npy (NumPy) file loadable by numpy.load; only the first num_samples rows are used. Needed for AWQ, GPTQ and LoRA correction only (Scale estimation runs without it). See <a href="https://github.com/openvinotoolkit/nncf" target="_blank" rel="noopener">NNCF docs (github.com/openvinotoolkit/nncf)</a>.</div>
+    <div class="help">Path to a .npy file containing a single numpy array of input tensors for calibration — shape (N, ...) where N is the number of samples and the rest is one model input. You can build it by running your model on sample prompts and saving the input tensor(s) with <code>numpy.save('inputs.npy', arr)</code>. Must be a .npy (NumPy) file loadable by numpy.load; only the first num_samples rows are used. Needed for AWQ, GPTQ and LoRA correction only (Scale estimation runs without it). See <a href="https://github.com/openvinotoolkit/nncf/blob/develop/docs/usage/post_training_compression/weights_compression/Usage.md" target="_blank" rel="noopener">NNCF docs &mdash; &ldquo;Prepare the calibration dataset&rdquo; (github.com/openvinotoolkit/nncf .../Usage.md)</a>.</div>
   </details>
 
   <div class="card">

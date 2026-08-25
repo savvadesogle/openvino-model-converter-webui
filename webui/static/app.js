@@ -334,6 +334,11 @@ function bindEvents() {
   $("cv-backup").addEventListener("change", updateFieldState);
   $("cv-text").addEventListener("input", () => { updateCvChecks(); updateFieldState(); });
   $("cv-dataset").addEventListener("input", () => { updateDataAware(); updateCvChecks(); });
+  $("cv-gptq").addEventListener("change", () => { updateDataAware(); updateCvChecks(); });
+  $("cv-lora").addEventListener("change", () => { updateDataAware(); updateCvChecks(); });
+  $("cv-awq").addEventListener("change", updateCvChecks);
+  $("cv-scale").addEventListener("change", updateCvChecks);
+  $("cv-nsamples").addEventListener("change", updateCvChecks);
   $("cv-tf-install").addEventListener("click", async () => {
     const t = state.cvTfreq;
     if (!t || !t.recommended) return;
@@ -1169,10 +1174,27 @@ function updateDataAware() {
   setMethod("cv-scale", on);
   setMethod("cv-gptq", on && hasDs);
   setMethod("cv-lora", on && hasDs);
+  enforceDataAwareExclusivity();
   const ds = $("cv-dataset");
   const ns = $("cv-nsamples");
   if (ds) ds.disabled = !on;
   if (ns) ns.disabled = !on;
+}
+function enforceDataAwareExclusivity() {
+  const gptq = $("cv-gptq");
+  const lora = $("cv-lora");
+  if (!gptq || !lora) return;
+  const gLabel = gptq.closest("label");
+  const lLabel = lora.closest("label");
+  if (gptq.checked) {
+    lora.checked = false;
+    lora.disabled = true;
+    if (lLabel) lLabel.classList.add("data-unsupported");
+  } else if (lora.checked) {
+    gptq.checked = false;
+    gptq.disabled = true;
+    if (gLabel) gLabel.classList.add("data-unsupported");
+  }
 }
 function autoSelfTest(modelValue) {
   if (state.selfTestBusy) return;
@@ -1249,6 +1271,17 @@ async function onModelChange() {
   if (v.startsWith("ov:")) {
     state.cvInfo = null;
     state.cvTfreq = null;
+    state.currentMode = null;
+    const modeSel = $("cv-mode");
+    if (modeSel) {
+      modeSel.value = "";
+      const gsel = $("cv-group");
+      if (gsel) { gsel.innerHTML = ""; gsel.value = ""; }
+      $("cv-ratio").disabled = true;
+      $("cv-all-layers").disabled = true;
+      setInfo("cv-mode-detail", "", "");
+      updateDataAware();
+    }
     setInfo("cv-meta", "This is an already-converted OpenVINO model. Pick a dense source instead.", "bad");
     renderCvTfreq();
     updateCvChecks();
@@ -1299,8 +1332,8 @@ function onModeChange() {
     gsel.appendChild(o);
   }
   gsel.value = m.default_group_size;
-  $("cv-ratio").disabled = keep || m.moe_only;
   const isInt8 = isInt8Mode(m);
+  $("cv-ratio").disabled = keep || m.moe_only || isInt8;
   $("cv-all-layers").disabled = keep || isInt8;
   if (isInt8) $("cv-all-layers").checked = false;
   setInfo("cv-mode-detail",
@@ -1415,16 +1448,22 @@ function updateCvChecks() {
 
   const errors = [];
   if (m && m.requires_per_channel && Number($("cv-group").value) !== -1) errors.push("INT8 mode requires group_size = -1.");
-  if (m && m.moe_only && state.cvInfo && !state.cvInfo.is_moe) errors.push("This mode requires a MoE model.");
-  if (m && m.available === false) errors.push("Mode not available in the installed NNCF — upgrade NNCF (pip install -r requirements.txt) or pick a different mode. Run 'Self-test modes' to see which work.");
+  if (m && m.moe_only && state.cvInfo && !state.cvInfo.is_moe) errors.push("Mode " + m.id + " (int2-mix/int3-mix) requires a Mixture-of-Experts model — pick a non-MoE mode (e.g. INT4 SYM) or choose a MoE source model.");
+  if (m && m.available === false) errors.push("Mode \"" + m.id + "\" not available in the installed NNCF — upgrade NNCF (pip install -r requirements.txt) or pick a different mode. Run 'Self-test modes' to see which work. This is about the weight-compression mode, not your model.");
   if (!state.cvInfo && !$("cv-text").value.trim() && !$("cv-model").value) errors.push("Choose a model.");
   const tf = state.cvTfreq;
   if (tf && tf.ok === false && tf.mode !== "unknown" && !$("cv-tfreq-auto").checked) {
     errors.push("Transformers " + (tf.required || "?") + " required but " + (tf.installed || "none") + " installed — enable auto-install or install it first.");
   }
   if (!keep && state.currentMode && ["none", "int8_sym", "int8_asym", "cb4", "mxfp4", "mxfp8_e4m3", "int2_mix", "int3_mix"].indexOf(state.currentMode.id) === -1) {
-    if (($("cv-awq").checked || $("cv-gptq").checked || $("cv-lora").checked) && !$("cv-dataset").value.trim()) {
+    const dsVal = ($("cv-dataset").value || "").trim();
+    if (($("cv-awq").checked || $("cv-gptq").checked || $("cv-lora").checked) && !dsVal) {
       errors.push("AWQ/GPTQ/LoRA correction need a calibration dataset (.npy) — provide one (see Data-aware methods: numpy.save('inputs.npy', arr) with shape (N, ...)) or disable the method.");
+    }
+    const ns = $("cv-nsamples");
+    const nsVal = ns ? ns.value : "";
+    if (dsVal && ns && !ns.disabled && nsVal.trim() !== "" && (!Number.isInteger(Number(nsVal)) || Number(nsVal) < 1)) {
+      errors.push("Num samples must be a positive integer (≥ 1).");
     }
   }
   if (errors.length) { wrap.innerHTML = ""; errors.forEach((e) => wrap.appendChild(el("div", null, "⚠ " + e))); }
@@ -1461,11 +1500,12 @@ async function runConvert() {
   if ($("cv-scale").checked && !$("cv-scale").disabled) da.scale_estimation = true;
   if ($("cv-gptq").checked && !$("cv-gptq").disabled) da.gptq = true;
   if ($("cv-lora").checked && !$("cv-lora").disabled) da.lora_correction = true;
+  if (da.gptq && da.lora_correction) delete da.lora_correction;
   const ds = $("cv-dataset");
   const dsEnabled = ds && !ds.disabled;
   const ns = $("cv-nsamples");
   const dsVal = dsEnabled ? (ds.value || "").trim() : "";
-  if (dsVal) { da.dataset = dsVal; da.num_samples = ns && !ns.disabled ? (Number(ns.value) || 128) : 128; }
+  if (dsVal) { da.dataset = dsVal; da.num_samples = ns && !ns.disabled ? Math.max(1, Math.floor(Number(ns.value)) || 128) : 128; }
   const cfg = {
     model_id: src.id || currentBase(),
     model_path: src.path,
