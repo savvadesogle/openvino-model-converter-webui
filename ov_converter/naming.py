@@ -57,7 +57,10 @@ def output_name(base: str, mode: str) -> str:
     base = base.rstrip("/\\")
     if base.lower().endswith("-ov"):
         base = base[:-3].rstrip("-")
-    return f"{base}-{token_for(mode)}-ov"
+    tok = token_for(mode)
+    if base.lower().endswith("-" + tok.lower()):
+        return f"{base}-ov"
+    return f"{base}-{tok}-ov"
 
 
 def intermediate_name(base: str) -> str:

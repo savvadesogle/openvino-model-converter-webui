@@ -15,6 +15,7 @@ class ModeInfo:
     id: str
     label: str
     bits: int | None
+    est_bits: int | None            # effective bits for size estimates (mix modes)
     symmetric: bool | None
     default_group_size: int
     group_size_choices: list[int]
@@ -40,8 +41,8 @@ OV_SUPPORTED: dict[str, dict] = {
     "mxfp8_e4m3":  dict(bits=8,  sym=None,  dg=32, choices=[32], per_channel=False, fixed=32, moe=False, ratio=None, backup=None),
     "fp8_e4m3":    dict(bits=8,  sym=None,  dg=64, choices=[-1, 32, 64, 128], per_channel=False, fixed=None, moe=False, ratio=None, backup=None),
     "cb4":         dict(bits=4,  sym=None,  dg=-1, choices=[-1], per_channel=True,  fixed=None, moe=False, ratio=None, backup=None),
-    "int2_mix":    dict(bits=2,  sym=True,  dg=64, choices=[-1, 32, 64, 128], per_channel=False, fixed=None, moe=True, ratio=None, backup="int4"),
-    "int3_mix":    dict(bits=3,  sym=True,  dg=64, choices=[-1, 32, 64, 128], per_channel=False, fixed=None, moe=True, ratio=None, backup="int4"),
+    "int2_mix":    dict(bits=2,  est_bits=4, sym=True,  dg=64, choices=[-1, 32, 64, 128], per_channel=False, fixed=None, moe=True, ratio=None, backup="int4"),
+    "int3_mix":    dict(bits=3,  est_bits=4, sym=True,  dg=64, choices=[-1, 32, 64, 128], per_channel=False, fixed=None, moe=True, ratio=None, backup="int4"),
     "none":        dict(bits=None, sym=None, dg=-1, choices=[-1], per_channel=False, fixed=None, moe=False, ratio=None, backup=None),
 }
 
@@ -62,12 +63,13 @@ def list_modes() -> list[ModeInfo]:
             id=mid,
             label=mid.replace("_", " ").upper(),
             bits=cfg["bits"],
+            est_bits=cfg.get("est_bits", cfg["bits"]),
             symmetric=cfg["sym"],
             default_group_size=cfg["dg"],
             group_size_choices=cfg["choices"],
             requires_per_channel=cfg["per_channel"],
-            default_ratio=None,
-            backup_precision=None,
+            default_ratio=cfg["ratio"],
+            backup_precision=cfg["backup"],
             group_size_fixed=cfg["fixed"],
             moe_only=cfg["moe"],
             help=MODE_HELP[mid],
@@ -105,8 +107,10 @@ def self_test_all() -> dict[str, str]:
             continue
         try:
             gs = None if (m.group_size_fixed is not None) else m.default_group_size
-            cm = compress_weights(model.clone(), mode=_ENUM_MEMBERS[m.id],
-                                  group_size=gs, all_layers=True)
+            kw = dict(mode=_ENUM_MEMBERS[m.id], group_size=gs)
+            if m.id not in ("int8_sym", "int8_asym"):
+                kw["all_layers"] = True
+            cm = compress_weights(model.clone(), **kw)
             ov.Core().compile_model(cm, "CPU")
             result[m.id] = "ok"
         except Exception as e:  # noqa: BLE001

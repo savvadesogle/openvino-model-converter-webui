@@ -107,7 +107,10 @@ def ram_check(needed_bytes: int) -> dict:
     """Check that the virtual address space (phys + pagefile) can hold `needed`."""
     vm = virtual_memory()
     if vm is None:
-        return {"ok": True, "reason": "non-Windows, skipped",
+        on_windows = hasattr(ctypes, "windll")
+        reason = ("memory query failed (Windows API error)" if on_windows
+                  else "no /proc/meminfo available on this platform")
+        return {"ok": True, "reason": f"skipped: {reason}",
                 "needed_gb": round(needed_bytes / 1e9, 1), "virtual_memory": None}
     avail = vm["avail_virtual_gb"]
     ok = avail * 1e9 >= needed_bytes
@@ -180,6 +183,14 @@ def validate_convert(mode_id: str, group_size: int, all_layers: bool,
         return errors
     if group_size not in m.group_size_choices:
         errors.append(f"group_size {group_size} not in allowed {m.group_size_choices}.")
+    if mode_id in ("int8_sym", "int8_asym"):
+        if all_layers:
+            errors.append(f"{mode_id} does not support all_layers=True.")
+        if ratio is not None and ratio != 1:
+            errors.append(f"{mode_id} does not support ratio != 1 (got {ratio}).")
+    if backup is not None and backup not in ("none", "int8_sym", "int8_asym",
+                                             "fp8_e4m3", "mxfp8_e4m3"):
+        errors.append(f"Invalid backup: {backup}.")
     if mode_id in ("int2_mix", "int3_mix") and ratio not in (None, 1.0):
         errors.append("Mixed two-pass mode ignores ratio; use a single-pass mode for ratio.")
     return errors

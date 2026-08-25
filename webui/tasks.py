@@ -53,6 +53,8 @@ class Task:
         cfg_path.write_text(json.dumps(redacted, ensure_ascii=False, indent=2),
                             encoding="utf-8")
         env = os.environ.copy()
+        env["PYTHONIOENCODING"] = "utf-8"
+        env["PYTHONUTF8"] = "1"
         env.setdefault(S.HF_HOME_ENV, str(S.CACHE_ROOT))
         env.setdefault(S.HF_HUB_CACHE_ENV, str(S.CACHE_ROOT / "hub"))
         if self.config.get("hf_home"):

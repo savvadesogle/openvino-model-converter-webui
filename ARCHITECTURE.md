@@ -189,7 +189,7 @@ tfreq_auto_install, keep_fp16_export, download_only, include_only, files, hf_hom
 hf_hub_cache`.
 
 Stages (each emits `@@STAGE <stage> | start|done|fail <detail>`; free text as
-`@@LOG <stage> | text`; progress as `@@PROGRESS <stage> <pct>`; final result as
+`@@LOG <stage> | text`; progress as `@@PROGRESS <stage> | <pct>`; final result as
 `@@META done | <json>`):
 
 ```
@@ -203,9 +203,14 @@ tokenizer check → genai_test  (download_only stops after download)
 - Tfreq: validates the model's transformers requirement via `tfreq.required_transformers`
   (before export, skipped for `mode="none"`); when mismatched it auto-installs the required
   version if `tfreq_auto_install` is set (and restores the pinned one from requirements.txt
-  after the run), otherwise the stage fails with the reason.
-- Export: `optimum-cli` fp16 → `<Base>-fp16-ov`; submodel list logged.
-- Compress: `compress_dir` per submodel; report dict in `done`.
+  in a `finally` block so it runs even on later stage failure), otherwise the stage fails
+  with the reason.
+- Export: `optimum-cli` fp16 → `<Base>-fp16-ov`; submodel list logged. This stage **always**
+  runs (for every mode, including `none`). For `mode="none"` (`fp16` token) `out_dir` is set
+  equal to the fp16 intermediate dir and no compression happens.
+- Compress: `compress_dir` per submodel; report dict in `done`. Skipped for `mode="none"`.
+  INT8 modes are coerced to `all_layers=None`/`backup_mode=None` (NNCF rejects those for
+  INT8); `data_aware` is ignored for INT8.
 - Package: copy metadata, write `manifest.json`, generate `README.md` model card.
 - Tokenizer: `package.verify` — all 4 tokenizer files present.
 - GenAI test: `run_test` on the converted dir; logs output + tok/s.
@@ -228,8 +233,8 @@ API routes:
 | `/api/modes` | GET | dynamic mode list |
 | `/api/modes/self-test` | POST | run per-mode compress+compile on a tiny model |
 | `/api/models` | GET | `{sources, converted}` from `scan` |
-| `/api/model/estimate` | POST `{path}` | size_gb + params |
-| `/api/resources` | POST `{params, size_bytes, mode_bits, download_path, output_path}` | `{resources: analyze(...)}` — reusable resource estimate (e.g. Convert tab); `analyze` also accepts `group_size`/`scale_bits` for the compressed-size formula |
+| `/api/model/estimate` | POST `{path}` | size_gb + params (currently **unused by the frontend**) |
+| `/api/resources` | POST `{params, size_bytes, mode_bits, download_path, output_path, group_size?, scale_bits?}` | `{resources: analyze(...)}` — reusable resource estimate; `ResourcesIn` carries optional `group_size`/`scale_bits`, which the handler forwards to `analyze` for the compressed-size formula (defaults: group_size=128, scale_bits=16). Currently **unused by the frontend** (Convert tab uses local heuristics in `estimateConvertNeeded`, not this route). |
 | `/api/hf/validate` | POST `{text, token, dest?}` | parse → local `detect_local` or HF `validate_model_id`; `{kind, info}`; `info.tfreq` carries the required-transformers verdict; on ok `info.resources = resources.analyze(params, size_bytes, download_path=dest)` |
 | `/api/model/local-check` | POST `{path, files}` | `local_check` (per-file presence) |
 | `/api/model/verify-hash` | POST `{path, files}` | NDJSON stream: `start/file/done` (sha256/size) |
@@ -237,7 +242,7 @@ API routes:
 | `/api/open-dir` | POST `{path}` | `os.startfile` (opens Explorer) |
 | `/api/mkdir` | POST `{path}` | create dirs under any local drive (Windows) / any absolute path (non-Windows); refuses UNC/network paths and relative paths |
 | `/api/download` | POST | start a download-only task (one at a time) |
-| `/api/convert` | POST | start a convert task |
+| `/api/convert` | POST | start a convert task (`ConvertIn` body) |
 | `/api/tf/switch` | POST `{version}` | pip-install `transformers=={version}` via `resolve_python()`; gated on no busy task; on success `ov_support.reset()` re-probes the support registry |
 | `/api/tf/restore` | POST | re-run `pip install -r requirements.txt` (restores the pinned transformers); gated on no busy task; on success `ov_support.reset()` |
 | `/api/task/cancel` | POST | cancel the running task |
@@ -245,7 +250,10 @@ API routes:
 | `/api/task/stream` | GET (SSE) | live log lines of the current task; ends with `done` event |
 
 `/api/download` and `/api/convert` bodies carry `hf_home`/`hf_hub_cache` (user-edited cache
-env), `dest`, `files` (selected files), etc.
+env), `dest`, `files` (selected files), etc. `ConvertIn` also declares `tfreq_auto_install`
+(default false), which the frontend (`app.js` `runConvert`) sends from the `#cv-tfreq-auto`
+checkbox; `/api/convert` forwards it (via `body.model_dump()`) to the pipeline, where it
+triggers the env-swap-and-restore in the `tfreq` stage.
 
 ### Task manager (webui/tasks.py)
 One global task at a time. `Task.start()` writes a **redacted** config (token removed) to
@@ -344,7 +352,7 @@ Notable behavior:
 ```
 @@STAGE <stage> | start|done <detail>|fail <detail>
 @@LOG <stage> | <free text>
-@@PROGRESS <stage> <pct>
+@@PROGRESS <stage> | <pct>
 @@META done | <json>
 ```
 Anything not starting with `@@` is treated as a raw log line.
@@ -401,18 +409,18 @@ python -m ov_converter.pipeline logs\some_config.json
 - Frontend syntax: `node --check webui/static/app.js`.
 - Backend syntax: `python -m py_compile ov_converter/*.py webui/*.py`.
 - API smoke: FastAPI `TestClient` against `webui.main.app` (see §6 routes). The model
-  `T:\models\Qwen\Qwen3.5-0.8B` is a known-good fixture (13 files, all present).
+  `T:\models\Qwen\Qwen3.5-2B` is a known-good fixture (13 files, all present).
 - Cross-file consistency: every `$("...")` id in `app.js` must exist in `index.html`
   exactly once (or be JS-created: `dl-path-spinner`, `hash-pct`, `hash-list`, `hash-<i>`,
   `create-btn-*`).
-- Suggested per-change checks: run the pipeline on the small `Qwen3.5-0.8B` (download →
+- Suggested per-change checks: run the pipeline on the small `Qwen3.5-2B` (download →
   export fp16 → int2 → package → GenAI test) end to end.
 - Architecture-support check: verify via `support.check_support` under `openvino-latest`
   (e.g. `("llama", "text-generation")` → `supported`, `("qwen3_5", "text-generation")` →
   `task_mismatch`), plus `node --check webui/static/app.js`.
 - Resource analysis: verify via `resources.analyze(...)` under `openvino-latest` (e.g.
-  `analyze(params=1e9, size_bytes=2e9)` → `convert.need_disk_gb` 4.5,
-  `compress.result_gb` 0.5), plus `node --check webui/static/app.js`.
+  `analyze(params=1e9, size_bytes=2e9)` → `convert.need_disk_gb` 4.4,
+  `compress.result_gb` 0.6), plus `node --check webui/static/app.js`.
 - Transformers requirement: `tfreq.required_transformers({"model_type": "qwen3_asr"})` →
   `recommended "4.57.6"`, `ok false` (with 5.2.0 installed), and
   `tfreq.required_transformers({"model_type": "qwen3_5", "transformers_version": "4.57.0.dev0"})`

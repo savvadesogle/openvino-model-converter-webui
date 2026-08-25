@@ -26,7 +26,7 @@ class ConvertConfig:
     token: str | None = None
     task: str = ""                           # auto-detected if empty
     mode: str = "int4_sym"
-    group_size: int = 128
+    group_size: int | None = None
     all_layers: bool = True
     ratio: float | None = None
     backup: str | None = None
@@ -73,14 +73,29 @@ def load_config(path: str | Path) -> ConvertConfig:
     return ConvertConfig(**{k: v for k, v in data.items() if k in ConvertConfig.__dataclass_fields__})
 
 
+def _detect_moe(cfg: dict) -> bool:
+    def _has_expert_key(d: dict) -> bool:
+        if not isinstance(d, dict):
+            return False
+        return any("expert" in str(k).lower() for k in d) or \
+            any(_has_expert_key(v) for v in d.values() if isinstance(v, dict))
+    if _has_expert_key(cfg.get("text_config", {})) or _has_expert_key(cfg):
+        return True
+    arch = (cfg.get("architectures") or [None])[0]
+    return "moe" in str(arch).lower() or "moe" in str(cfg.get("model_type", "")).lower()
+
+
 def resolve_source(cfg: ConvertConfig) -> Path | None:
     if cfg.model_path and Path(cfg.model_path).exists():
         return Path(cfg.model_path)
-    if "/" in cfg.model_id or "\\" in cfg.model_id:
-        cand = S.model_dir(cfg.model_id)
+    from ov_converter import hf
+    mid = cfg.model_id
+    hf_id = hf.parse_hf_id(mid)
+    if hf_id:
+        cand = S.model_dir(hf_id)
         if cand.exists():
             return cand
-    p = Path(cfg.model_id)
+    p = Path(mid)
     if p.exists():
         return p
     return None
@@ -100,6 +115,8 @@ def run(cfg: ConvertConfig, emit: Emitter | None = None) -> dict:
     out_dir = Path(cfg.output_dir) if cfg.output_dir else naming.output_dir(base, cfg.mode)
     fp16_dir = Path(cfg.intermediate_dir) if cfg.intermediate_dir else \
         naming.intermediate_dir(base, out_dir.parent)
+    if cfg.mode == "none":
+        out_dir = fp16_dir
 
     # ---------------------------------------------------------------- validate
     emit.start("validate")
@@ -110,14 +127,14 @@ def run(cfg: ConvertConfig, emit: Emitter | None = None) -> dict:
         mode_info = next((m for m in list_modes() if m.id == cfg.mode), None)
         if mode_info is None or not mode_info.available:
             raise RuntimeError(f"Mode '{cfg.mode}' is not supported by this NNCF version.")
+        if cfg.group_size is None:
+            cfg.group_size = mode_info.default_group_size
+        from ov_converter.hf import read_config
+        is_moe = _detect_moe(read_config(src)) if src is not None else False
         errs = checks.validate_convert(cfg.mode, cfg.group_size, cfg.all_layers,
-                                       cfg.ratio, cfg.backup, model_is_moe=True)
+                                       cfg.ratio, cfg.backup, model_is_moe=is_moe)
         if errs:
             raise RuntimeError("; ".join(errs))
-        if cfg.task:
-            pass
-        else:
-            cfg.task = "image-text-to-text"  # refined after source resolution
         if src is not None:
             emit.done("validate", f"source={src}")
         else:
@@ -127,13 +144,13 @@ def run(cfg: ConvertConfig, emit: Emitter | None = None) -> dict:
         return result
 
     # ---------------------------------------------------------------- download
-    if src is None and cfg.download:
-        emit.start("download")
-        from ov_converter import hf
-        mid = cfg.model_id
-        dest = Path(cfg.dest) if cfg.dest else S.model_dir(mid)
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        try:
+    emit.start("download")
+    try:
+        if src is None and cfg.download:
+            from ov_converter import hf
+            mid = cfg.model_id
+            dest = Path(cfg.dest) if cfg.dest else S.model_dir(mid)
+            dest.parent.mkdir(parents=True, exist_ok=True)
             rc = hf.download(mid, dest, revision=cfg.revision, token=cfg.token,
                              include_only=cfg.include_only, files=cfg.files,
                              log=lambda t: emit.log(t, "download"),
@@ -141,14 +158,12 @@ def run(cfg: ConvertConfig, emit: Emitter | None = None) -> dict:
             if rc != 0:
                 raise RuntimeError(f"hf download exited with code {rc}")
             src = dest
-            emit.done("download", f"-> {dest}")
-        except Exception as e:  # noqa: BLE001
-            emit.fail("download", str(e))
-            return result
-
-    if src is None:
-        emit.fail("download", "no source resolved")
+        if src is None:
+            raise RuntimeError("no source resolved")
+    except Exception as e:  # noqa: BLE001
+        emit.fail("download", str(e))
         return result
+    emit.done("download", f"-> {src}")
 
     # download-only mode: stop here
     if cfg.download_only:
@@ -196,6 +211,8 @@ def run(cfg: ConvertConfig, emit: Emitter | None = None) -> dict:
         except Exception as e:  # noqa: BLE001
             emit.fail("tfreq", str(e))
             return result
+    try:
+        # ---------------------------------------------------------------- export (dense fp16) -- always runs
         emit.start("export")
         try:
             from ov_converter.export import export_dense
@@ -207,22 +224,24 @@ def run(cfg: ConvertConfig, emit: Emitter | None = None) -> dict:
             emit.fail("export", str(e))
             return result
 
-        # ---------------------------------------------------------------- compress
-        emit.start("compress")
-        try:
-            from ov_converter.compress import compress_dir
-            report = compress_dir(
-                fp16_dir, out_dir, mode=cfg.mode, group_size=cfg.group_size,
-                all_layers=cfg.all_layers, ratio=cfg.ratio, backup=cfg.backup,
-                only_text=cfg.only_text, log=lambda t: emit.log(t, "compress"))
-            result["compress_report"] = report
-            failed = [k for k, v in report.items() if v.startswith("fail")]
-            if failed:
-                raise RuntimeError(f"compression failed for: {failed}")
-            emit.done("compress", str({k: v for k, v in report.items()}))
-        except Exception as e:  # noqa: BLE001
-            emit.fail("compress", str(e))
-            return result
+        if cfg.mode != "none":
+            # ---------------------------------------------------------------- compress
+            emit.start("compress")
+            try:
+                from ov_converter.compress import compress_dir
+                report = compress_dir(
+                    fp16_dir, out_dir, mode=cfg.mode, group_size=cfg.group_size,
+                    all_layers=cfg.all_layers, ratio=cfg.ratio, backup=cfg.backup,
+                    only_text=cfg.only_text, data_aware=cfg.data_aware,
+                    log=lambda t: emit.log(t, "compress"))
+                result["compress_report"] = report
+                failed = [k for k, v in report.items() if v.startswith("fail")]
+                if failed:
+                    raise RuntimeError(f"compression failed for: {failed}")
+                emit.done("compress", str({k: v for k, v in report.items()}))
+            except Exception as e:  # noqa: BLE001
+                emit.fail("compress", str(e))
+                return result
 
         # ---------------------------------------------------------------- package
         emit.start("package")
@@ -265,31 +284,32 @@ def run(cfg: ConvertConfig, emit: Emitter | None = None) -> dict:
             return result
 
         # ---------------------------------------------------------------- cleanup intermediate
-        if cfg.delete_intermediate and fp16_dir != out_dir and fp16_dir.exists():
+        if cfg.delete_intermediate and not cfg.keep_fp16_export \
+                and fp16_dir != out_dir and fp16_dir.exists():
             shutil.rmtree(fp16_dir, ignore_errors=True)
             emit.log("intermediate fp16 export removed", "package")
 
-    # ---------------------------------------------------------------- genai test
-    if cfg.run_genai_test:
-        emit.start("genai_test")
-        try:
-            from ov_converter.genai_test import run_test, format_result
-            res = run_test(out_dir if cfg.mode != "none" else fp16_dir,
-                           prompt=cfg.prompt, log=lambda t: emit.log(t, "genai_test"))
-            result["genai_test"] = res
-            emit.log(format_result(res), "genai_test")
-            emit.done("genai_test", f"{res['tok_per_s']} tok/s")
-        except Exception as e:  # noqa: BLE001
-            result["genai_test"] = {"ok": False, "error": str(e)}
-            emit.fail("genai_test", str(e))
-
-    if cfg.tfreq_auto_install and installed_swapped:
-        emit.log("restoring pinned transformers version ...", "tfreq")
-        try:
-            from ov_converter import tfreq
-            tfreq.restore(log=lambda t: emit.log(t, "tfreq"))
-        except Exception:  # noqa: BLE001
-            emit.log("transformers restore failed (non-fatal)", "tfreq")
+        # ---------------------------------------------------------------- genai test
+        if cfg.run_genai_test:
+            emit.start("genai_test")
+            try:
+                from ov_converter.genai_test import run_test, format_result
+                res = run_test(out_dir, prompt=cfg.prompt,
+                               log=lambda t: emit.log(t, "genai_test"))
+                result["genai_test"] = res
+                emit.log(format_result(res), "genai_test")
+                emit.done("genai_test", f"{res['tok_per_s']} tok/s")
+            except Exception as e:  # noqa: BLE001
+                result["genai_test"] = {"ok": False, "error": str(e)}
+                emit.fail("genai_test", str(e))
+    finally:
+        if cfg.tfreq_auto_install and installed_swapped:
+            emit.log("restoring pinned transformers version ...", "tfreq")
+            try:
+                from ov_converter import tfreq
+                tfreq.restore(log=lambda t: emit.log(t, "tfreq"))
+            except Exception:  # noqa: BLE001
+                emit.log("transformers restore failed (non-fatal)", "tfreq")
 
     result["done"] = True
     emit.emit("META", "done", json.dumps(result, ensure_ascii=False, default=str))

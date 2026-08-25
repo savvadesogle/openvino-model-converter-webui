@@ -60,11 +60,4 @@ def list_submodels(ir_dir: str | Path) -> list[str]:
         if name in ("openvino_tokenizer", "openvino_detokenizer"):
             continue
         out.append(f.name)
-    if not out and (d / "openvino_model.xml").exists():
-        out = ["openvino_model.xml"]
     return out
-
-
-def submodel_stem_for(mode: str, original_stem: str) -> str:
-    """e.g. openvino_language_model -> openvino_language_model (name unchanged)."""
-    return original_stem

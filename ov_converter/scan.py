@@ -5,6 +5,7 @@ from pathlib import Path
 
 import ov_converter.settings as S
 from ov_converter.hf import task_from_config, read_config
+from ov_converter.package import SUBMODEL_STEMS
 
 EXCLUDE_DIRS = {".cache", ".git", "logs", ".locks", "hub", "xet"}
 SKIP_PREFIXES = (".", "models--")
@@ -48,11 +49,11 @@ def _classify(d: Path) -> dict | None:
     cfg_path = d / "config.json"
     cfg = read_config(d) if cfg_path.exists() else {}
 
-    is_ov = (d / "openvino_model.xml").exists() or (d / "openvino_language_model.xml").exists()
+    is_ov = any((d / f"{stem}.xml").exists() for stem in SUBMODEL_STEMS)
     is_gguf = bool(list(d.glob("*.gguf")))
     is_quantized = bool(cfg.get("quantization_config")) or (d / "quantization_config.json").exists()
     has_weights = (d / "model.safetensors.index.json").exists() or \
-        bool(list(d.glob("*.safetensors"))) or bool(list(d.glob("pytorch_model*.bin")))
+        bool(list(d.glob("*.safetensors"))) or bool(list(d.glob("*.bin")))
 
     if is_ov:
         return None                      # already converted -> separate "Converted" list
@@ -101,7 +102,7 @@ def scan_converted(root: str | Path | None = None) -> list[dict]:
     for d in sorted(root.iterdir()):
         if not d.is_dir():
             continue
-        is_ov = (d / "openvino_model.xml").exists() or (d / "openvino_language_model.xml").exists()
+        is_ov = any((d / f"{stem}.xml").exists() for stem in SUBMODEL_STEMS)
         if is_ov:
             size = sum(f.stat().st_size for f in d.rglob("*") if f.is_file())
             out.append({

@@ -13,6 +13,7 @@ _SUPPORTED: dict | None = None
 _ready = threading.Event()
 _started = False
 _lock = threading.Lock()
+_GENERATION = 0
 
 
 def _load() -> dict | None:
@@ -46,23 +47,31 @@ def _load() -> dict | None:
 
 
 def warm_start() -> None:
-    global _started, _SUPPORTED
+    global _started, _SUPPORTED, _GENERATION
     with _lock:
         if _started or _ready.is_set():
             return
         _started = True
+        _GENERATION += 1
+        gen = _GENERATION
 
-    def _run() -> None:
+    def _run(gen: int) -> None:
         global _SUPPORTED
-        _SUPPORTED = _load()
+        data = _load()
+        with _lock:
+            if gen != _GENERATION:
+                return
+            _SUPPORTED = data
         _ready.set()
 
-    t = threading.Thread(target=_run, name="ov-support-loader", daemon=True)
+    t = threading.Thread(target=_run, args=(gen,), name="ov-support-loader", daemon=True)
     t.start()
 
 
 def reset() -> None:
-    global _SUPPORTED, _ERROR, _started
+    global _SUPPORTED, _ERROR, _started, _GENERATION
+    with _lock:
+        _GENERATION += 1
     _ready.clear()
     _SUPPORTED = None
     _ERROR = None

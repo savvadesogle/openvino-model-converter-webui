@@ -1119,6 +1119,9 @@ function onModeChange() {
   }
   gsel.value = m.default_group_size;
   $("cv-ratio").disabled = m.moe_only;
+  const isInt8 = isInt8Mode(m);
+  $("cv-all-layers").disabled = isInt8;
+  if (isInt8) $("cv-all-layers").checked = false;
   setInfo("cv-mode-detail",
     `${m.label} · ${m.bits ? m.bits + " bits" : ""} · symmetric: ${m.symmetric === null ? "n/a" : m.symmetric}` +
     (m.requires_per_channel ? "\n⚠ requires per-channel (group_size = -1)" : "") +
@@ -1150,6 +1153,30 @@ function currentBase() {
   const t = $("cv-text").value.trim();
   if (t) return t.split(/[\\/]/).pop() || t;
   return "model";
+}
+function normalizeHfId(v) {
+  let t = String(v || "").trim().replace(/^['"]+|['"]+$/g, "");
+  if (!t) return null;
+  t = t.replace(/\\/g, "/");
+  t = t.replace(/^https?:\/\//, "").replace(/^\/+/, "");
+  if (t.startsWith("huggingface.co/")) t = t.slice("huggingface.co/".length);
+  else if (t.startsWith("hf.co/")) t = t.slice("hf.co/".length);
+  t = t.split(/\/(?:tree|blob|resolve|blame|raw)\//)[0];
+  const m = /^([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)/.exec(t);
+  return m ? m[0] : null;
+}
+function isInt8Mode(m) { return !!m && (m.id === "int8_sym" || m.id === "int8_asym"); }
+function cvModelId() {
+  const v = $("cv-model").value;
+  const isOv = v.startsWith("ov:");
+  const source = state.cvInfo ? v : $("cv-text").value.trim();
+  if (!source || isOv) return { id: null, path: null };
+  const looksLocal = /^[A-Za-z]:[\\/]/.test(source) || source.startsWith("/") || source.startsWith("\\");
+  if (!looksLocal) {
+    const hf = normalizeHfId(source);
+    if (hf) return { id: hf, path: null };
+  }
+  return { id: source, path: source };
 }
 function modeToken(mode) {
   const map = { int8_sym: "int8", int8_asym: "int8", int4_sym: "int4", int4_asym: "int4",
@@ -1213,24 +1240,29 @@ function estimateConvertNeeded(params, bits) {
 
 async function runConvert() {
   const hf = updateHfDerived();
+  const m = state.currentMode;
+  const src = cvModelId();
+  const isInt8 = isInt8Mode(m);
+  const da = {};
+  if ($("cv-awq").checked) da.awq = true;
+  if ($("cv-scale").checked) da.scale_estimation = true;
+  if ($("cv-gptq").checked) da.gptq = true;
+  if ($("cv-lora").checked) da.lora_correction = true;
+  const ds = $("cv-dataset").value.trim();
+  if (ds) { da.dataset = ds; da.num_samples = Number($("cv-nsamples").value) || 128; }
   const cfg = {
-    model_id: currentBase(),
-    model_path: $("cv-model").value && !$("cv-model").value.startsWith("ov:") ? $("cv-model").value : null,
+    model_id: src.id || currentBase(),
+    model_path: src.path,
     download: $("cv-download-first").checked,
     hf_home: hf.home || null,
     hf_hub_cache: hf.hub || null,
     task: $("cv-task").value.trim(),
-    mode: state.currentMode ? state.currentMode.id : "int4_sym",
+    mode: m ? m.id : "int4_sym",
     group_size: Number($("cv-group").value),
-    all_layers: $("cv-all-layers").checked,
+    all_layers: isInt8 ? false : $("cv-all-layers").checked,
     ratio: $("cv-ratio").value ? Number($("cv-ratio").value) : null,
     backup: $("cv-backup").value,
-    data_aware: {
-      awq: $("cv-awq").checked, scale_estimation: $("cv-scale").checked,
-      gptq: $("cv-gptq").checked, lora_correction: $("cv-lora").checked,
-      dataset: $("cv-dataset").value.trim() || null,
-      num_samples: Number($("cv-nsamples").value) || 128,
-    },
+    data_aware: da,
     only_text: $("cv-only-text").checked,
     delete_intermediate: $("cv-delete-int").checked,
     output_dir: $("cv-outdir").value.trim() || null,

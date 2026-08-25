@@ -63,6 +63,7 @@ class ConvertIn(BaseModel):
     output_dir: str | None = None
     run_genai_test: bool = True
     prompt: str | None = None
+    tfreq_auto_install: bool = False
     download_only: bool = False
     hf_home: str | None = None
     hf_hub_cache: str | None = None
@@ -78,6 +79,8 @@ class ResourcesIn(BaseModel):
     mode_bits: int | None = None
     download_path: str | None = None
     output_path: str | None = None
+    group_size: int | None = None
+    scale_bits: int | None = None
 
 
 class VerifyHashIn(BaseModel):
@@ -201,7 +204,8 @@ def api_resources(body: ResourcesIn):
     from ov_converter import resources
     return {"resources": resources.analyze(
         params=body.params, size_bytes=body.size_bytes, mode_bits=body.mode_bits,
-        download_path=body.download_path, output_path=body.output_path)}
+        download_path=body.download_path, output_path=body.output_path,
+        group_size=body.group_size, scale_bits=body.scale_bits)}
 
 
 @app.post("/api/tf/switch")
@@ -357,6 +361,10 @@ async def api_stream(task_id: str | None = None):
     """SSE stream of the current (or a given) task log lines."""
     async def gen():
         t = manager.current
+        if task_id and (t is None or t.id != task_id):
+            yield "event: done\n" + \
+                f"data: {json.dumps({'returncode': None, 'error': f'task {task_id} not found'}, ensure_ascii=False)}\n\n"
+            return
         if t is None:
             yield "event: done\ndata: {}\n\n"
             return

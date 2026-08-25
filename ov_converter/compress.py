@@ -58,21 +58,30 @@ def compress_ir(ir_path: str | Path, out_path: str | Path, *, mode: str,
     elif mode == "none":
         pass
     else:
+        is_int8 = mode in ("int8_sym", "int8_asym")
         kwargs = dict(
             mode=MODE_ENUM[mode],
             group_size=group_size,
-            all_layers=all_layers,
         )
+        if is_int8:
+            kwargs["all_layers"] = None
+            kwargs["backup_mode"] = None
+        else:
+            kwargs["all_layers"] = all_layers
+            if backup == "none":
+                kwargs["backup_mode"] = BackupMode.NONE
+            elif backup:
+                kwargs["backup_mode"] = BACKUP_MODE.get(backup)
         if ratio is not None:
             kwargs["ratio"] = ratio
-        if backup and backup != "none":
-            kwargs["backup_mode"] = BACKUP_MODE.get(backup)
         if ignore_patterns:
             kwargs["ignored_scope"] = IgnoredScope(patterns=ignore_patterns)
-        if data_aware:
+        if data_aware and not is_int8:
             kwargs.update(_data_aware_kwargs(data_aware))
+        eff_all_layers = None if is_int8 else all_layers
+        eff_backup = None if is_int8 else backup
         _log_lines(log, f"compress_weights(mode={mode}, group_size={group_size}, "
-                        f"all_layers={all_layers}, ratio={ratio}, backup={backup})")
+                        f"all_layers={eff_all_layers}, ratio={ratio}, backup={eff_backup})")
         model = compress_weights(model, **kwargs)
 
     ov.save_model(model, str(out_path), compress_to_fp16=False)
@@ -122,8 +131,8 @@ def _data_aware_kwargs(da: dict) -> dict:
     return kwargs
 
 
-TEXT_SUBMODELS = ("openvino_language_model", "openvino_text_embeddings_model", "openvino_model")
-VISION_SUBMODELS = ("openvino_vision_embeddings_model", "openvino_vision_embeddings_pos_model",
+VISION_SUBMODELS = ("openvino_vision_model", "openvino_vision_embeddings_model",
+                    "openvino_vision_embeddings_pos_model",
                     "openvino_vision_embeddings_merger_model")
 
 
@@ -138,6 +147,7 @@ def _copy_pair(src_dir: Path, dst_dir: Path, stem: str, log) -> None:
 def compress_dir(src_dir: str | Path, dst_dir: str | Path, *, mode: str,
                  group_size: int, all_layers: bool, ratio: float | None,
                  backup: str | None, only_text: bool,
+                 data_aware: dict | None = None,
                  log: Callable[[str], None] | None = None) -> dict:
     """Compress every `openvino_*.xml` submodel from src_dir into dst_dir.
 
@@ -152,6 +162,10 @@ def compress_dir(src_dir: str | Path, dst_dir: str | Path, *, mode: str,
 
     submodels = list_submodels(src_dir)
     _log_lines(log, f"Submodels found: {submodels}")
+
+    if data_aware and mode in ("int8_sym", "int8_asym"):
+        _log_lines(log, "data_aware ignored for int8 mode")
+        data_aware = None
 
     # copy non-OpenVINO metadata files (configs, tokenizer sources, etc.),
     # plus the tokenizer/detokenizer IRs (they are not compressed)
@@ -175,7 +189,8 @@ def compress_dir(src_dir: str | Path, dst_dir: str | Path, *, mode: str,
         dst = dst_dir / sm
         try:
             compress_ir(src, dst, mode=mode, group_size=group_size,
-                        all_layers=all_layers, ratio=ratio, backup=backup, log=log)
+                        all_layers=all_layers, ratio=ratio, backup=backup,
+                        data_aware=data_aware, log=log)
             report[sm] = "ok"
         except Exception as e:  # noqa: BLE001
             report[sm] = f"fail: {e}"

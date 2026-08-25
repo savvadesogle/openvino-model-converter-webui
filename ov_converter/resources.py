@@ -135,6 +135,7 @@ def _recommendations(stages: dict, params, output_path: str,
 def analyze(params: int | None = None,
             size_bytes: int = 0,
             mode_bits: int | None = None,
+            est_bits: int | None = None,
             download_path: str | None = None,
             output_path: str | None = None,
             group_size: int | None = None,
@@ -174,11 +175,12 @@ def analyze(params: int | None = None,
 
     orig = size_bytes
     res_bits = mode_bits if mode_bits else 4
+    calc_bits = est_bits if est_bits is not None and est_bits != res_bits else res_bits
     gs = group_size if group_size is not None else 128
     sb = scale_bits if scale_bits is not None else 16
     scale_overhead = (sb / gs) if (gs and gs > 0) else 0.0
     fp16 = params * 2 if params else 0
-    res_bytes = int(params * (res_bits + scale_overhead) / 8 * 1.15) if params else 0
+    res_bytes = int(params * (calc_bits + scale_overhead) / 8 * 1.15) if params else 0
     dl_need = int(orig * 1.05) if orig else 0
     conv_disk_need = int(fp16 * 1.05 + fp16 * 1.15)
     comp_disk_need = int(fp16 * 1.15 + res_bytes)
