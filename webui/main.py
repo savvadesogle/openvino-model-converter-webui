@@ -95,7 +95,9 @@ class TfSwitchIn(BaseModel):
 
 @app.get("/")
 def index():
-    return FileResponse(STATIC / "index.html")
+    resp = FileResponse(STATIC / "index.html")
+    resp.headers.setdefault("Cache-Control", "no-store")
+    return resp
 
 
 @app.get("/api/info")

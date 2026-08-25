@@ -1,6 +1,7 @@
 """Local model scanner: find dense convertible models, exclude quantized/GGUF/OV/cache."""
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import ov_converter.settings as S
@@ -105,11 +106,16 @@ def scan_converted(root: str | Path | None = None) -> list[dict]:
         is_ov = any((d / f"{stem}.xml").exists() for stem in SUBMODEL_STEMS)
         if is_ov:
             size = sum(f.stat().st_size for f in d.rglob("*") if f.is_file())
-            out.append({
+            rec = {
                 "path": str(d), "name": d.name,
                 "size_gb": round(size / 1e9, 2),
                 "is_vlm": (d / "openvino_vision_embeddings_model.xml").exists(),
                 "has_tokenizer": (d / "openvino_tokenizer.xml").exists(),
-            })
+                "tfreq": __import__("ov_converter.tfreq", fromlist=["x"]).required_transformers(read_config(d)),
+            }
+            if (d / "manifest.json").exists():
+                manifest = json.loads((d / "manifest.json").read_text(encoding="utf-8"))
+                rec["mode"] = manifest.get("mode_token")
+            out.append(rec)
     out.sort(key=lambda x: x["name"].lower())
     return out

@@ -13,6 +13,7 @@ const state = {
 let activeProgressId = null;
 let dlLocalDebounce = null;
 let hfEnvDebounce = null;
+let cvModesRefreshing = false;
 
 /* ---------------------------------------------------------------- helpers */
 function el(tag, cls, text) {
@@ -63,18 +64,25 @@ async function api(url, opts) {
 
 /* ---------------------------------------------------------------- init */
 async function init() {
-  await loadInfo();
-  await Promise.all([loadModes(), loadModels()]);
-  bindEvents();
-  updateGenaiDevice();
-  await loadDrives();
-  loadHfDrives();
-  initHfDrive();
-  renderTaskSelect();
-  renderModes();
-  renderModelSelect();
-  onTaskChange();
-  bindTaskStream();
+  try {
+    renderTaskSelect();
+    renderModes();
+    renderModelSelect();
+    onTaskChange();
+    updateDeleteRowState();
+    bindEvents();
+    updateGenaiDevice();
+    await loadInfo();
+    await Promise.all([loadModes(), loadModels()]);
+    await loadDrives();
+    loadHfDrives();
+    initHfDrive();
+    bindTaskStream();
+  } catch (e) {
+    console.error(e);
+    if ($("init-error")) $("init-error").textContent = "init failed: " + e.message;
+    else appendLog("init error: " + e.message);
+  }
 }
 async function loadInfo() {
   state.info = await api("/api/info");
@@ -390,6 +398,11 @@ function bindEvents() {
     $("task-collapse").textContent = collapsed ? "▴" : "▾";
     $("task-collapse").title = collapsed ? "Expand" : "Collapse";
   });
+  const refreshModesOnFocus = () => {
+    if (!state.taskActive && document.visibilityState !== "hidden") loadModes().catch(() => {});
+  };
+  document.addEventListener("visibilitychange", refreshModesOnFocus);
+  window.addEventListener("focus", refreshModesOnFocus);
 }
 
 /* ---------------------------------------------------------------- Download tab */
@@ -1060,6 +1073,24 @@ function cvTask() {
   const sel = $("cv-task");
   return sel && (sel.value === "keep" || sel.value === "compress") ? sel.value : "compress";
 }
+function isFp16Ov(info) {
+  return !!(info && (info.mode === "fp16" || (info.name || "").endsWith("-fp16-ov") || (info.name || "").indexOf("-fp16-") !== -1));
+}
+function updateDeleteRowState() {
+  const hideDel = cvTask() === "keep" || isFp16Ov(state.cvInfo);
+  const delRow = $("cv-delete-int-row");
+  const delBox = $("cv-delete-int");
+  const delHelp = $("cv-delete-int-help");
+  if (delRow) {
+    delRow.hidden = hideDel;
+    delRow.style.display = hideDel ? "none" : "";
+  }
+  if (delHelp) {
+    delHelp.hidden = hideDel;
+    delHelp.style.display = hideDel ? "none" : "";
+  }
+  if (delBox) delBox.checked = !hideDel;
+}
 function renderTaskSelect() {
   const sel = $("cv-task");
   if (!sel) return;
@@ -1115,18 +1146,8 @@ function onTaskChange() {
   const compCard = $("cv-group") ? $("cv-group").closest(".card") : null;
   const controls = ["cv-mode", "cv-selftest", "cv-group", "cv-backup", "cv-ratio", "cv-all-layers"];
   if (keep && state.currentMode && state.currentMode.id !== "none") state.prevCompressMode = state.currentMode.id;
-  const delRow = $("cv-delete-int-row");
-  const delBox = $("cv-delete-int");
-  const delHelp = $("cv-delete-int-help");
-  if (delRow) {
-    delRow.hidden = keep;
-    delRow.style.display = keep ? "none" : "";
-  }
-  if (delHelp) {
-    delHelp.hidden = keep;
-    delHelp.style.display = keep ? "none" : "";
-  }
-  if (delBox) delBox.checked = !keep;
+  updateDeleteRowState();
+  if (!keep && isFp16Ov(state.cvInfo)) setInfo("cv-meta", "Existing dense fp16 IR — compressing in place, source fp16 IR is preserved (delete skipped).", "ok");
   controls.forEach((id) => { const n = $(id); if (n) n.disabled = keep; });
   if (modeCard) modeCard.hidden = keep;
   if (compCard) compCard.hidden = keep;
@@ -1306,29 +1327,54 @@ async function onModelChange() {
     updateTfreqStageStatus();
     updateCvChecks();
     updateFieldState();
+    updateDeleteRowState();
     return;
   }
   if (v.startsWith("ov:")) {
-    state.cvInfo = null;
-    state.cvTfreq = null;
-    state.currentMode = null;
+    $("cv-download-first").checked = false;
+    const ovPath = v.slice(3);
+    const rec = state.converted.find((c) => c.path === ovPath);
     const modeSel = $("cv-mode");
-    if (modeSel) {
-      modeSel.value = "";
-      modeSel.disabled = true;
+    const fp16Ov = !!(rec && (rec.mode === "fp16" || (rec.name || "").endsWith("-fp16-ov") || (rec.name || "").indexOf("-fp16-") !== -1));
+    if (fp16Ov) {
+      state.cvInfo = rec;
+      state.cvTfreq = rec.tfreq || null;
       const gsel = $("cv-group");
       if (gsel) { gsel.innerHTML = ""; gsel.value = ""; }
       $("cv-ratio").disabled = true;
       $("cv-all-layers").disabled = true;
-      setInfo("cv-mode-detail", "", "");
-      updateDataAware();
+      setInfo("cv-meta", "Existing dense fp16 IR — will compress this (re-export skipped).", "ok");
+      if (modeSel) {
+        modeSel.disabled = false;
+        const valid = (val) => val && [...modeSel.options].some((o) => o.value === val);
+        if (cvTask() === "keep") modeSel.value = valid("none") ? "none" : "";
+        else if (!valid(modeSel.value)) modeSel.value = valid("int4_sym") ? "int4_sym" : (modeSel.options[0] ? modeSel.options[0].value : "");
+      }
+      onModeChange();
+    } else {
+      state.cvInfo = null;
+      state.cvTfreq = null;
+      state.currentMode = null;
+      if (modeSel) {
+        modeSel.value = "";
+        modeSel.disabled = true;
+        const gsel = $("cv-group");
+        if (gsel) { gsel.innerHTML = ""; gsel.value = ""; }
+        $("cv-ratio").disabled = true;
+        $("cv-all-layers").disabled = true;
+        setInfo("cv-mode-detail", "", "");
+        updateDataAware();
+      }
+      setInfo("cv-meta", "This is an already-converted OpenVINO model. Pick a dense source instead.", "bad");
     }
-    setInfo("cv-meta", "This is an already-converted OpenVINO model. Pick a dense source instead.", "bad");
     renderCvTfreq();
     updateTfreqStageStatus();
     updateCvName();
     updateCvChecks();
     updateFieldState();
+    const modeCard = $("cv-mode") ? $("cv-mode").closest(".card") : null;
+    if (modeCard) modeCard.hidden = cvTask() === "keep";
+    updateDeleteRowState();
     return;
   }
   const src = state.sources.find((s) => s.path === v);
@@ -1354,6 +1400,9 @@ async function onModelChange() {
   updateCvName();
   updateCvChecks();
   updateFieldState();
+  const modeCard = $("cv-mode") ? $("cv-mode").closest(".card") : null;
+  if (modeCard) modeCard.hidden = cvTask() === "keep";
+  updateDeleteRowState();
 }
 function onModeChange() {
   const keep = cvTask() === "keep";
@@ -1476,7 +1525,16 @@ function cvModelId() {
   const v = $("cv-model").value;
   const isOv = v.startsWith("ov:");
   const source = state.cvInfo ? v : $("cv-text").value.trim();
-  if (!source || isOv) return { id: null, path: null };
+  if (!source) return { id: null, path: null };
+  if (isOv) {
+    const rec = state.converted.find((c) => c.path === v.slice(3));
+    const fp16 = !!(rec && (rec.mode === "fp16" || (rec.name || "").endsWith("-fp16-ov") || (rec.name || "").indexOf("-fp16-") !== -1));
+    if (fp16) {
+      const path = v.slice(3);
+      return { id: path, path };
+    }
+    return { id: null, path: null };
+  }
   const looksLocal = /^[A-Za-z]:[\\/]/.test(source) || source.startsWith("/") || source.startsWith("\\");
   if (!looksLocal) {
     const hf = normalizeHfId(source);
@@ -1490,7 +1548,7 @@ function modeToken(mode) {
     fp8_e4m3: "fp8e4m3", cb4: "cb4", int2_mix: "int2-mix", int3_mix: "int3-mix", none: "fp16" };
   return map[mode] || mode;
 }
-function updateCvChecks() {
+async function updateCvChecks() {
   const keep = cvTask() === "keep";
   const m = keep ? null : state.currentMode;
   const params = state.cvParams || 0;
@@ -1523,7 +1581,20 @@ function updateCvChecks() {
   const errors = [];
   if (m && m.requires_per_channel && Number($("cv-group").value) !== -1) errors.push("INT8 mode requires group_size = -1.");
   if (m && m.moe_only && state.cvInfo && !state.cvInfo.is_moe) errors.push("Mode " + m.id + " (int2-mix/int3-mix) requires a Mixture-of-Experts model — pick a non-MoE mode (e.g. INT4 SYM) or choose a MoE source model.");
-  if (m && m.available === false) errors.push("Mode \"" + m.id + "\" not available in the installed NNCF — upgrade NNCF (pip install -r requirements.txt) or pick a different mode. Run 'Self-test modes' to see which work. This is about the weight-compression mode, not your model.");
+  if (m && m.available === false) {
+    if (!cvModesRefreshing) {
+      cvModesRefreshing = true;
+      try {
+        await loadModes();
+        const fresh = state.modes.find((x) => x.id === (m && m.id));
+        if (fresh && fresh.available) return;
+      } catch (e) {
+      } finally {
+        cvModesRefreshing = false;
+      }
+    }
+    errors.push("Mode \"" + m.id + "\" not available in the installed NNCF — upgrade NNCF (pip install -r requirements.txt) or pick a different mode. Run 'Self-test modes' to see which work. This is about the weight-compression mode, not your model.");
+  }
   if (!state.cvInfo && !$("cv-text").value.trim() && !$("cv-model").value) errors.push("Choose a model.");
   const tf = state.cvTfreq;
   if (tf && tf.ok === false && tf.mode !== "unknown" && !$("cv-tfreq-auto").checked) {
@@ -1559,6 +1630,7 @@ function estimateConvertNeeded(params, bits) {
 async function runConvert() {
   const src = cvModelId();
   const task = cvTask();
+  const srcIsFp16Ov = !!(state.cvInfo && (state.cvInfo.mode === "fp16" || /-fp16-/.test(state.cvInfo.name || "")));
   if ((task === "compress" || task === "keep") && src.id && !src.path && !state.cvInfo) {
     switchTab("download");
     $("dl-text").value = src.id;
@@ -1594,7 +1666,7 @@ async function runConvert() {
     backup: $("cv-backup").value,
     data_aware: da,
     only_text: $("cv-only-text").checked,
-    delete_intermediate: task === "keep" ? false : $("cv-delete-int").checked,
+    delete_intermediate: srcIsFp16Ov ? false : (task === "keep" ? false : $("cv-delete-int").checked),
     output_dir: $("cv-outdir").value.trim() || null,
     run_genai_test: $("cv-genai").checked,
     genai_device: (document.querySelector('input[name="cv-genai-device"]:checked') || { value: "CPU" }).value || "CPU",

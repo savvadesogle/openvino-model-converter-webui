@@ -123,6 +123,10 @@ def run(cfg: ConvertConfig, emit: Emitter | None = None) -> dict:
     emit.start("validate")
     try:
         src = resolve_source(cfg)
+        src_is_ov = src is not None and any(
+            (src / f"{stem}.xml").exists() for stem in package.SUBMODEL_STEMS)
+        if src_is_ov:
+            fp16_dir = src
         if src is None and not cfg.download:
             raise RuntimeError("Source model not found locally and download disabled.")
         mode_info = next((m for m in list_modes() if m.id == cfg.mode), None)
@@ -213,17 +217,20 @@ def run(cfg: ConvertConfig, emit: Emitter | None = None) -> dict:
             emit.fail("tfreq", str(e))
             return result
     try:
-        # ---------------------------------------------------------------- export (dense fp16) -- always runs
-        emit.start("export")
-        try:
-            from ov_converter.export import export_dense
-            rc = export_dense(src, fp16_dir, cfg.task, log=lambda t: emit.log(t, "export"))
-            if rc != 0:
-                raise RuntimeError(f"optimum export exited with code {rc}")
-            emit.done("export", f"-> {fp16_dir}")
-        except Exception as e:  # noqa: BLE001
-            emit.fail("export", str(e))
-            return result
+        if not src_is_ov:
+            # ---------------------------------------------------------------- export (dense fp16)
+            emit.start("export")
+            try:
+                from ov_converter.export import export_dense
+                rc = export_dense(src, fp16_dir, cfg.task, log=lambda t: emit.log(t, "export"))
+                if rc != 0:
+                    raise RuntimeError(f"optimum export exited with code {rc}")
+                emit.done("export", f"-> {fp16_dir}")
+            except Exception as e:  # noqa: BLE001
+                emit.fail("export", str(e))
+                return result
+        else:
+            emit.log("reusing existing OpenVINO IR as fp16 source", "export")
 
         if cfg.mode != "none":
             # ---------------------------------------------------------------- compress
@@ -286,7 +293,7 @@ def run(cfg: ConvertConfig, emit: Emitter | None = None) -> dict:
 
         # ---------------------------------------------------------------- cleanup intermediate
         if cfg.delete_intermediate and not cfg.keep_fp16_export \
-                and fp16_dir != out_dir and fp16_dir.exists():
+                and fp16_dir != out_dir and not src_is_ov and fp16_dir.exists():
             shutil.rmtree(fp16_dir, ignore_errors=True)
             emit.log("intermediate fp16 export removed", "package")
 
