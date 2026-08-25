@@ -240,6 +240,10 @@ async function validateHfEnv() {
 }
 
 /* ---------------------------------------------------------------- tabs */
+function switchTab(name) {
+  document.querySelectorAll(".tab").forEach((x) => x.classList.toggle("active", x.dataset.panel === name));
+  document.querySelectorAll(".panel").forEach((p) => p.classList.toggle("active", p.id === "panel-" + name));
+}
 function bindEvents() {
   document.querySelectorAll(".tab").forEach((t) => {
     t.addEventListener("click", () => {
@@ -329,6 +333,7 @@ function bindEvents() {
   $("cv-group").addEventListener("change", () => { updateCvChecks(); updateFieldState(); });
   $("cv-backup").addEventListener("change", updateFieldState);
   $("cv-text").addEventListener("input", () => { updateCvChecks(); updateFieldState(); });
+  $("cv-dataset").addEventListener("input", () => { updateDataAware(); updateCvChecks(); });
   $("cv-tf-install").addEventListener("click", async () => {
     const t = state.cvTfreq;
     if (!t || !t.recommended) return;
@@ -336,7 +341,7 @@ function bindEvents() {
     appendLog("installing transformers " + t.recommended + " ...");
     try {
       const r = await api("/api/tf/switch", { method: "POST", body: JSON.stringify({ version: t.recommended }) });
-      if (r.ok) appendLog("switched to transformers " + r.version + " — reloading");
+      if (r.ok) { appendLog("switched to transformers " + r.version + " — reloading"); await loadModels(); }
       else appendLog("switch failed: " + (r.error || r.output || "?"));
       await loadInfo();
     } catch (e) { appendLog("switch error: " + e.message); }
@@ -349,7 +354,7 @@ function bindEvents() {
     appendLog("restoring pinned transformers version ...");
     try {
       const r = await api("/api/tf/restore", { method: "POST" });
-      if (r.ok) appendLog("restored pinned versions");
+      if (r.ok) { appendLog("restored pinned versions"); await loadModels(); }
       else appendLog("restore failed: " + (r.error || r.output || "?"));
       await loadInfo();
     } catch (e) { appendLog("restore error: " + e.message); }
@@ -1150,13 +1155,20 @@ function updateDataAware() {
   const incompatible = ["none", "int8_sym", "int8_asym", "cb4", "mxfp4", "mxfp8_e4m3", "int2_mix", "int3_mix"];
   const compat = !!mode && incompatible.indexOf(mode.id) === -1;
   const on = !keep && compat;
-  const methods = ["cv-awq", "cv-scale", "cv-gptq", "cv-lora"];
-  methods.forEach((id) => {
+  const hasDs = !!$("cv-dataset").value.trim();
+  const setMethod = (id, enabled) => {
     const cb = $(id);
     const label = cb ? cb.closest("label") : null;
-    if (label) label.classList.toggle("data-unsupported", !on);
-    if (cb) cb.disabled = !on;
-  });
+    if (label) label.classList.toggle("data-unsupported", !enabled);
+    if (cb) {
+      cb.disabled = !enabled;
+      if (!enabled) cb.checked = false;
+    }
+  };
+  setMethod("cv-awq", on && hasDs);
+  setMethod("cv-scale", on);
+  setMethod("cv-gptq", on && hasDs);
+  setMethod("cv-lora", on && hasDs);
   const ds = $("cv-dataset");
   const ns = $("cv-nsamples");
   if (ds) ds.disabled = !on;
@@ -1211,13 +1223,16 @@ function renderCvTfreq() {
   if (t.ok) {
     box.className = "banner show ok";
     box.textContent = "Transformers " + (t.installed || "?") + " satisfies " + t.required + " — OK";
+    const cvTfreqAuto = $("cv-tfreq-auto");
+    if (cvTfreqAuto) { cvTfreqAuto.disabled = true; cvTfreqAuto.checked = false; }
   } else {
-    box.className = "banner show warn";
+    box.className = "banner show neutral";
     box.textContent = t.reason + (t.recommended ? "  —  use Install to switch to " + t.recommended : "");
-    if (!$("cv-tfreq-auto").checked) $("cv-tfreq-auto").checked = true;
+    const cvTfreqAuto = $("cv-tfreq-auto");
+    if (cvTfreqAuto) { cvTfreqAuto.disabled = false; if (!cvTfreqAuto.checked) cvTfreqAuto.checked = true; }
   }
   if (installBtn) installBtn.disabled = state.tfBusy || t.ok || !t.recommended;
-  if (restoreBtn) restoreBtn.disabled = state.tfBusy;
+  if (restoreBtn) restoreBtn.disabled = state.tfBusy || t.ok;
 }
 async function onModelChange() {
   const v = $("cv-model").value;
@@ -1307,11 +1322,11 @@ async function runSelfTest() {
     const r = await api("/api/modes/self-test", { method: "POST" });
     state.selfTest = r.result || {};
     const lines = Object.entries(state.selfTest).map(([k, v]) => `${k}: ${v}`);
-    setInfo("cv-mode-detail", "Self-test (tiny compress+compile on CPU):\n" + lines.join("\n"), "ok");
+    setInfo("cv-selftest-res", "Self-test (tiny compress+compile on CPU):\n" + lines.join("\n"), "ok");
     applyModeSuffixes();
   } catch (e) {
     state.selfTest = null;
-    setInfo("cv-mode-detail", "Self-test error: " + e.message, "bad");
+    setInfo("cv-selftest-res", "Self-test error: " + e.message, "bad");
   }
   state.selfTestBusy = false;
   $("cv-selftest").disabled = cvTask() === "keep";
@@ -1322,6 +1337,14 @@ function updateCvName() {
   const mode = state.currentMode ? state.currentMode.id : "int4_sym";
   const root = state.info && state.info.paths ? state.info.paths.output : "";
   $("cv-outdir").value = `${root}\\${base}-${modeToken(mode)}-ov`;
+  updateIntermediateHint();
+}
+function updateIntermediateHint() {
+  const hint = $("cv-intermediate-hint");
+  if (!hint) return;
+  const base = currentBase();
+  const root = state.info && state.info.paths ? state.info.paths.output : "";
+  hint.textContent = root ? `${root}\\${base}-fp16-ov` : "";
 }
 function currentBase() {
   const v = $("cv-model").value;
@@ -1393,7 +1416,7 @@ function updateCvChecks() {
   const errors = [];
   if (m && m.requires_per_channel && Number($("cv-group").value) !== -1) errors.push("INT8 mode requires group_size = -1.");
   if (m && m.moe_only && state.cvInfo && !state.cvInfo.is_moe) errors.push("This mode requires a MoE model.");
-  if (m && m.available === false) errors.push("Mode not available in the installed NNCF.");
+  if (m && m.available === false) errors.push("Mode not available in the installed NNCF — upgrade NNCF (pip install -r requirements.txt) or pick a different mode. Run 'Self-test modes' to see which work.");
   if (!state.cvInfo && !$("cv-text").value.trim() && !$("cv-model").value) errors.push("Choose a model.");
   const tf = state.cvTfreq;
   if (tf && tf.ok === false && tf.mode !== "unknown" && !$("cv-tfreq-auto").checked) {
@@ -1401,7 +1424,7 @@ function updateCvChecks() {
   }
   if (!keep && state.currentMode && ["none", "int8_sym", "int8_asym", "cb4", "mxfp4", "mxfp8_e4m3", "int2_mix", "int3_mix"].indexOf(state.currentMode.id) === -1) {
     if (($("cv-awq").checked || $("cv-gptq").checked || $("cv-lora").checked) && !$("cv-dataset").value.trim()) {
-      errors.push("AWQ/GPTQ/LoRA correction need a calibration dataset (.npy) — provide it or disable the method.");
+      errors.push("AWQ/GPTQ/LoRA correction need a calibration dataset (.npy) — provide one (see Data-aware methods: numpy.save('inputs.npy', arr) with shape (N, ...)) or disable the method.");
     }
   }
   if (errors.length) { wrap.innerHTML = ""; errors.forEach((e) => wrap.appendChild(el("div", null, "⚠ " + e))); }
@@ -1421,10 +1444,17 @@ function estimateConvertNeeded(params, bits) {
 }
 
 async function runConvert() {
-  const hf = updateHfDerived();
-  const m = state.currentMode;
   const src = cvModelId();
   const task = cvTask();
+  if ((task === "compress" || task === "keep") && src.id && !src.path && !state.cvInfo) {
+    switchTab("download");
+    $("dl-text").value = src.id;
+    appendLog("Model not present locally — validating on the Download tab.");
+    validateDownload();
+    return;
+  }
+  const hf = updateHfDerived();
+  const m = state.currentMode;
   const isInt8 = isInt8Mode(m);
   const da = {};
   if ($("cv-awq").checked && !$("cv-awq").disabled) da.awq = true;

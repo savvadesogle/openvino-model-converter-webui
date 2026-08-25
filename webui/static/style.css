@@ -114,6 +114,8 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 
 .info { margin-top: 10px; border: 1px dashed transparent; border-radius: 0; padding: 10px 12px; font-size: 12.5px; display: none; white-space: pre-wrap; }
 #dl-files { margin-top: 10px; }
+#cv-selftest-res { margin-top: 6px; }
+#cv-selftest-res:empty { display: none; }
 .info.show { display: block; }
 .info.ok { border-color: var(--mint-2); background: #eff7f2; }
 .info.bad { border-color: var(--err); background: #fbefef; }

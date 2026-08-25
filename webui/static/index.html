@@ -100,7 +100,7 @@
     <input id="cv-text" placeholder="... or paste a HF link / local path here">
     <div id="cv-meta" class="info"></div>
     <div id="cv-tfreq" class="banner"></div>
-    <label class="check"><input id="cv-download-first" type="checkbox"> Download first if not present locally</label>
+    <label class="check"><input id="cv-download-first" type="checkbox"> Model not local? Paste the HF link in the field above and press Convert — you'll be sent to the Download tab to validate &amp; download it first.</label>
   </div>
 
   <div class="card">
@@ -119,6 +119,8 @@
       <button id="cv-selftest" class="secondary">Self-test modes</button>
     </div>
     <div id="cv-mode-detail" class="info"></div>
+    <div id="cv-selftest-res" class="info"></div>
+    <div class="help">If a mode shows &ldquo;not available in the installed NNCF&rdquo;, that mode is missing from your installed NNCF's CompressWeightsMode enum. To fix: upgrade NNCF (<code>pip install -r requirements.txt</code> or <code>pip install --upgrade nncf</code> in the openvino-latest env), or pick a different mode. The &ldquo;Self-test modes&rdquo; button shows which modes pass a tiny compress+compile on this environment.</div>
   </div>
 
   <div class="card">
@@ -158,6 +160,8 @@
       <label>Calibration dataset (.npy) <input id="cv-dataset" placeholder="path/to/inputs.npy"></label>
       <label>Num samples <input id="cv-nsamples" type="number" value="128"></label>
     </div>
+    <div class="help">Number of calibration input samples (rows of the .npy array) NNCF uses for data-aware calibration. Higher = slower but better-calibrated compression. Typical range 16-256; 128 is a good default. Must not exceed the number of rows in the .npy file.</div>
+    <div class="help">Path to a .npy file containing a single numpy array of input tensors for calibration — shape (N, ...) where N is the number of samples and the rest is one model input. You can build it by running your model on sample prompts and saving the input tensor(s) with <code>numpy.save('inputs.npy', arr)</code>. Must be a .npy (NumPy) file loadable by numpy.load; only the first num_samples rows are used. Needed for AWQ, GPTQ and LoRA correction only (Scale estimation runs without it). See <a href="https://github.com/openvinotoolkit/nncf" target="_blank" rel="noopener">NNCF docs (github.com/openvinotoolkit/nncf)</a>.</div>
   </details>
 
   <div class="card">
@@ -172,6 +176,7 @@
     <p class="desc">Result path. The name follows the HF OpenVINO convention &ldquo;&lt;Base&gt;-&lt;mode&gt;-ov&rdquo;, with &ldquo;-ov&rdquo; always last.</p>
     <label>Output directory <input id="cv-outdir" class="mono"></label>
     <label class="check"><input id="cv-delete-int" type="checkbox" checked> Delete intermediate fp16 export after conversion</label>
+    <div class="help">During conversion the model is first exported to a dense fp16 OpenVINO IR, then compressed. That intermediate copy is stored at <span id="cv-intermediate-hint"></span>\&lt;Base&gt;-fp16-ov (the same folder where the final model is written, under savvadesogle). Tick this to delete it after the run (keeps disk tidy); untick to keep it (e.g. to reuse it for several compression runs).</div>
     <label class="check"><input id="cv-genai" type="checkbox" checked> Run GenAI end-to-end test after conversion</label>
     <div class="help">After conversion, runs the model through OpenVINO GenAI to verify it works end-to-end (loads the converted dir, generates a short sample, reports tokens/sec).</div>
     <pre class="code">from ov_converter.genai_test import run_test, format_result
@@ -187,7 +192,7 @@ print(format_result(res))</pre>
     <div id="cv-ram" class="checkline"></div>
     <div id="cv-errors" class="errors"></div>
     <div class="grid">
-      <label class="check"><input id="cv-tfreq-auto" type="checkbox"> Auto-install required transformers version (swaps shared env, restores after)</label>
+      <label class="check"><input id="cv-tfreq-auto" type="checkbox"> Auto-install required transformers version (swaps shared env, restores after)<span class="help">Only relevant when the installed version does not satisfy the model — otherwise it is disabled.</span></label>
       <div class="row"><button id="cv-tf-install" class="secondary" disabled>Install required transformers</button><button id="cv-tf-restore" class="secondary" disabled>Restore pinned versions</button></div>
       <div class="help">This project pins exact library versions in requirements.txt. &ldquo;Install required transformers&rdquo; (or auto-install) temporarily swaps the shared Python env to a different transformers version needed by a specific model. Click &ldquo;Restore pinned versions&rdquo; to switch the env back to the pinned requirements.txt versions — use it after a manual install, or to clean up a swap that didn't finish.</div>
     </div>
