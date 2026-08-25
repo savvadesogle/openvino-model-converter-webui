@@ -57,7 +57,10 @@ main { display: flex; flex-direction: column; gap: 14px; max-width: 1000px; }
 .card h3:first-child { margin-top: 0; }
 .card.done { background: #f2fbf6; border-color: var(--mint-2); }
 .card.bad { background: #fbefef; border: 1px solid var(--err); }
+input.field-ok, select.field-ok, label.field-ok { background: #eff7f2; border-color: var(--mint-2); }
+div.card.field-ok { background: #f2fbf6; border: 1px solid var(--mint-2); }
 .desc, .hint { margin: 0 0 10px; color: var(--muted); font-size: 12.5px; }
+.help { font-size: 12px; color: var(--muted); margin-top: 2px; }
 
 .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 14px; margin-top: 10px; }
@@ -172,7 +175,8 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .res-row.state-fail .res-dot { background: var(--err); }
 .res-row.state-unknown .res-dot { background: #ccc; }
 
-#dl-hash-card { border-top: 4px dashed #f2fbf6; margin-top: -14px; }
+#dl-resources-card { border-top: 4px dashed #f2fbf6; margin-top: -14px; }
+#dl-resources-card[hidden] { display: none; }
 #dl-hash-card[hidden] { display: none; }
 
 #dl-tfreq { margin-top: 2px; }
@@ -190,6 +194,8 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .hf-link sup { font-size: 9px; }
 
 details.card summary { cursor: pointer; font-weight: 700; }
+
+details.attach-above, .attach-above { border-top: 4px dashed #f2fbf6; margin-top: -14px; }
 
 /* task panel */
 .task { position: sticky; bottom: 0; width: 100%; max-width: 1000px; margin: 16px auto 0; max-height: 42vh; overflow: auto; z-index: 10; box-shadow: 0 8px 30px rgba(90,80,60,.12); border-radius: 0; }

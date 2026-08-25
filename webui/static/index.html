@@ -95,7 +95,7 @@
     <p class="desc">Choose a locally scanned model (dense, not GGUF/quantized/OV), or paste a HF link / local path. If it is not downloaded yet, check &ldquo;Download first&rdquo;.</p>
     <div class="row">
       <select id="cv-model"></select>
-      <button id="cv-refresh" class="secondary">Refresh</button>
+      <button id="cv-refresh" class="secondary">Rescan</button>
     </div>
     <input id="cv-text" placeholder="... or paste a HF link / local path here">
     <div id="cv-meta" class="info"></div>
@@ -105,9 +105,9 @@
 
   <div class="card">
     <h2>Task</h2>
-    <p class="desc">Auto-detected from config.json (vision models map to image-text-to-text).</p>
+    <p class="desc">Choose "convert to OpenVINO" to keep the original weights, or "compress via NNCF" for mixed-precision quantization.</p>
     <div class="row">
-      <input id="cv-task" placeholder="auto">
+      <select id="cv-task"></select>
     </div>
   </div>
 
@@ -125,22 +125,22 @@
     <h2>Compression</h2>
     <p class="desc">Group size shares one scale per group; -1 means per-channel. INT8 modes require per-channel. Ratio/backup apply to single-pass mixed precision.</p>
     <div class="grid">
-      <label>Group size <select id="cv-group"></select></label>
+      <label>Group size <select id="cv-group"></select><span class="help">Weights are grouped; one scale is shared per group. -1 = per-channel (one scale per row).</span></label>
       <label>Backup precision <select id="cv-backup">
         <option value="none">none</option>
         <option value="int8_sym">int8_sym</option>
         <option value="int8_asym" selected>int8_asym</option>
         <option value="fp8_e4m3">fp8_e4m3</option>
         <option value="mxfp8_e4m3">mxfp8_e4m3</option>
-      </select></label>
+      </select><span class="help">Precision kept for layers that don't fit the target mode (safety fallback). 'none' = no backup.</span></label>
     </div>
     <div class="grid">
-      <label>Ratio <input id="cv-ratio" type="number" step="0.1" min="0" max="1" placeholder="1.0"></label>
-      <label class="check" style="align-self:end"><input id="cv-all-layers" type="checkbox" checked> Compress all layers</label>
+      <label>Ratio <input id="cv-ratio" type="number" step="0.1" min="0" max="1" placeholder="1.0"><span class="help">Fraction of layers actually compressed in single-pass mixed precision (0..1).</span></label>
+      <label class="check" style="align-self:end"><input id="cv-all-layers" type="checkbox" checked> Compress all layers<span class="help">When checked, every compressible layer is quantized; uncheck to let NNCF pick only the sensitive ones.</span></label>
     </div>
   </div>
 
-  <details class="card">
+  <details class="card attach-above">
     <summary>Data-aware methods (optional)</summary>
     <div class="grid">
       <label class="check"><input id="cv-awq" type="checkbox"> AWQ</label>

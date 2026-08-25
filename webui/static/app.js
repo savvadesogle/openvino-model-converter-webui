@@ -5,6 +5,7 @@ const $ = (id) => document.getElementById(id);
 const state = {
   info: null, modes: [], sources: [], converted: [],
   dlInfo: null, cvInfo: null, currentMode: null, currentTask: null,
+  selfTest: null, selfTestBusy: false, selfTestLast: null, prevCompressMode: null,
   cvTfreq: null, tfBusy: false,
   taskActive: false, taskKind: null, dlFiles: null, dlSelected: null, dlLocalComplete: null, dlResources: null,
   validatedSub: null, dlSubDirty: false, validating: false, drives: [], hfEnvState: null,
@@ -67,6 +68,7 @@ async function init() {
   await loadDrives();
   loadHfDrives();
   initHfDrive();
+  renderTaskSelect();
   renderModes();
   renderModelSelect();
   bindTaskStream();
@@ -86,6 +88,7 @@ async function loadInfo() {
 }
 async function loadModes() {
   state.modes = (await api("/api/modes")).modes;
+  renderModes();
 }
 async function loadModels() {
   const d = await api("/api/models");
@@ -321,6 +324,10 @@ function bindEvents() {
   $("cv-model").addEventListener("change", onModelChange);
   $("cv-mode").addEventListener("change", onModeChange);
   $("cv-selftest").addEventListener("click", runSelfTest);
+  $("cv-task").addEventListener("change", onTaskChange);
+  $("cv-group").addEventListener("change", () => { updateCvChecks(); updateFieldState(); });
+  $("cv-backup").addEventListener("change", updateFieldState);
+  $("cv-text").addEventListener("input", () => { updateCvChecks(); updateFieldState(); });
   $("cv-tf-install").addEventListener("click", async () => {
     const t = state.cvTfreq;
     if (!t || !t.recommended) return;
@@ -1029,11 +1036,117 @@ async function verifyHashes() {
 }
 
 /* ---------------------------------------------------------------- Convert tab */
+function cvTask() {
+  const sel = $("cv-task");
+  return sel && (sel.value === "keep" || sel.value === "compress") ? sel.value : "compress";
+}
+function renderTaskSelect() {
+  const sel = $("cv-task");
+  if (!sel) return;
+  const prev = sel.value;
+  sel.innerHTML = "";
+  const defs = [
+    ["keep", "Convert to OpenVINO (keep original weights — no compression)"],
+    ["compress", "Compress via NNCF"],
+  ];
+  for (const [value, label] of defs) {
+    const o = el("option", null, label);
+    o.value = value;
+    sel.appendChild(o);
+  }
+  sel.value = prev === "keep" || prev === "compress" ? prev : "compress";
+}
+function modeOptionLabel(m) {
+  const st = state.selfTest && state.selfTest[m.id];
+  if (!st) return m.label;
+  return st.startsWith("ok") ? `${m.label}  [self-test ok]` : `${m.label}  [self-test fail]`;
+}
+function renderModes() {
+  const sel = $("cv-mode");
+  if (!sel) return;
+  const prev = sel.value;
+  sel.innerHTML = "";
+  for (const m of state.modes) {
+    const o = el("option", null, modeOptionLabel(m));
+    o.value = m.id;
+    sel.appendChild(o);
+  }
+  const valid = (v) => v && [...sel.options].some((o) => o.value === v);
+  if (cvTask() === "keep") {
+    sel.value = valid("none") ? "none" : "";
+  } else if (valid(prev)) {
+    sel.value = prev;
+  } else if (valid("int4_sym")) {
+    sel.value = "int4_sym";
+  }
+  onModeChange();
+}
+function applyModeSuffixes() {
+  const sel = $("cv-mode");
+  if (!sel) return;
+  for (const o of sel.options) {
+    const m = state.modes.find((x) => x.id === o.value);
+    if (m) o.textContent = modeOptionLabel(m);
+  }
+}
+function onTaskChange() {
+  const keep = cvTask() === "keep";
+  const modeCard = $("cv-mode") ? $("cv-mode").closest(".card") : null;
+  const compCard = $("cv-group") ? $("cv-group").closest(".card") : null;
+  const controls = ["cv-mode", "cv-selftest", "cv-group", "cv-backup", "cv-ratio", "cv-all-layers"];
+  if (keep && state.currentMode && state.currentMode.id !== "none") state.prevCompressMode = state.currentMode.id;
+  controls.forEach((id) => { const n = $(id); if (n) n.disabled = keep; });
+  if (modeCard) modeCard.hidden = keep;
+  if (compCard) compCard.hidden = keep;
+  const sel = $("cv-mode");
+  if (sel) {
+    const want = keep ? "none"
+      : (state.prevCompressMode && [...sel.options].some((o) => o.value === state.prevCompressMode)) ? state.prevCompressMode
+        : ([...sel.options].some((o) => o.value === "int4_sym") ? "int4_sym" : "");
+    sel.value = [...sel.options].some((o) => o.value === want) ? want : "";
+  }
+  onModeChange();
+  updateCvChecks();
+  updateFieldState();
+}
+function updateFieldState() {
+  const keep = cvTask() === "keep";
+  const modelOk = !!(state.cvInfo || $("cv-text").value.trim());
+  const modeOk = !!state.currentMode;
+  const groupOk = !!($("cv-group") && $("cv-group").value !== "");
+  const backupOk = !!($("cv-backup") && $("cv-backup").value !== "");
+  const modelCard = $("cv-model") ? $("cv-model").closest(".card") : null;
+  const modeCard = $("cv-mode") ? $("cv-mode").closest(".card") : null;
+  const compCard = $("cv-group") ? $("cv-group").closest(".card") : null;
+  const setOk = (node, ok) => { if (node) node.classList.toggle("field-ok", !!ok); };
+  if (keep) {
+    setOk($("cv-model"), modelOk);
+    setOk(modelCard, modelOk);
+    setOk($("cv-mode"), false);
+    setOk(modeCard, false);
+    setOk($("cv-group"), false);
+    setOk($("cv-backup"), false);
+    setOk(compCard, false);
+  } else {
+    const allOk = modelOk && modeOk && groupOk && backupOk;
+    setOk($("cv-model"), allOk);
+    setOk($("cv-mode"), allOk);
+    setOk($("cv-group"), allOk);
+    setOk($("cv-backup"), allOk);
+    setOk(compCard, allOk);
+    setOk(modelCard, false);
+  }
+}
+function autoSelfTest(modelValue) {
+  if (state.selfTestBusy) return;
+  if (state.selfTest && state.selfTestLast === modelValue) return;
+  state.selfTestLast = modelValue;
+  runSelfTest();
+}
 function renderModelSelect() {
   const sel = $("cv-model");
   const prev = sel.value;
   sel.innerHTML = "";
-  sel.appendChild(el("option", null, "— select a scanned model —"));
   for (const s of state.sources) {
     const o = el("option", null, `${s.name}  (${s.size_gb} GB, ${s.task}, ${s.model_type || "?"})`);
     o.value = s.path;
@@ -1078,13 +1191,22 @@ function renderCvTfreq() {
 async function onModelChange() {
   const v = $("cv-model").value;
   $("cv-meta").innerHTML = "";
-  if (!v) { state.cvInfo = null; state.cvTfreq = null; renderCvTfreq(); updateCvChecks(); return; }
+  if (!v) {
+    state.cvInfo = null;
+    state.cvTfreq = null;
+    $("cv-text").value = "";
+    renderCvTfreq();
+    updateCvChecks();
+    updateFieldState();
+    return;
+  }
   if (v.startsWith("ov:")) {
     state.cvInfo = null;
     state.cvTfreq = null;
     setInfo("cv-meta", "This is an already-converted OpenVINO model. Pick a dense source instead.", "bad");
     renderCvTfreq();
     updateCvChecks();
+    updateFieldState();
     return;
   }
   const src = state.sources.find((s) => s.path === v);
@@ -1094,9 +1216,9 @@ async function onModelChange() {
     setInfo("cv-meta",
       `${src.name} · ${src.task} · ${src.model_type || "?"} · ${src.size_gb} GB · tokenizer: ${src.has_tokenizer ? "yes" : "no"}` +
       (src.is_moe ? "\n· MoE model (int2-mix available)" : ""), "ok");
-    $("cv-task").value = src.task;
     $("cv-download-first").checked = false;
     state.cvParams = src.size_bytes / 2;
+    autoSelfTest(v);
   } else {
     // custom / pasted path
     state.cvTfreq = null;
@@ -1106,11 +1228,23 @@ async function onModelChange() {
   renderCvTfreq();
   updateCvName();
   updateCvChecks();
+  updateFieldState();
 }
 function onModeChange() {
+  const keep = cvTask() === "keep";
   const m = state.modes.find((x) => x.id === $("cv-mode").value);
   state.currentMode = m;
   const gsel = $("cv-group");
+  if (!m) {
+    if (gsel) { gsel.innerHTML = ""; gsel.value = ""; }
+    $("cv-ratio").disabled = true;
+    $("cv-all-layers").disabled = true;
+    setInfo("cv-mode-detail", "", "");
+    updateCvName();
+    updateCvChecks();
+    updateFieldState();
+    return;
+  }
   gsel.innerHTML = "";
   for (const g of m.group_size_choices) {
     const o = el("option", null, g === -1 ? "-1 (per-channel)" : String(g));
@@ -1118,9 +1252,9 @@ function onModeChange() {
     gsel.appendChild(o);
   }
   gsel.value = m.default_group_size;
-  $("cv-ratio").disabled = m.moe_only;
+  $("cv-ratio").disabled = keep || m.moe_only;
   const isInt8 = isInt8Mode(m);
-  $("cv-all-layers").disabled = isInt8;
+  $("cv-all-layers").disabled = keep || isInt8;
   if (isInt8) $("cv-all-layers").checked = false;
   setInfo("cv-mode-detail",
     `${m.label} · ${m.bits ? m.bits + " bits" : ""} · symmetric: ${m.symmetric === null ? "n/a" : m.symmetric}` +
@@ -1129,16 +1263,25 @@ function onModeChange() {
     (m.help ? "\n" + m.help : ""), "ok");
   updateCvName();
   updateCvChecks();
+  updateFieldState();
 }
 async function runSelfTest() {
+  if (state.selfTestBusy) return;
+  state.selfTestBusy = true;
   $("cv-selftest").disabled = true;
   $("cv-selftest").textContent = "Testing…";
   try {
     const r = await api("/api/modes/self-test", { method: "POST" });
-    const lines = Object.entries(r.result).map(([k, v]) => `${k}: ${v}`);
+    state.selfTest = r.result || {};
+    const lines = Object.entries(state.selfTest).map(([k, v]) => `${k}: ${v}`);
     setInfo("cv-mode-detail", "Self-test (tiny compress+compile on CPU):\n" + lines.join("\n"), "ok");
-  } catch (e) { setInfo("cv-mode-detail", "Self-test error: " + e.message, "bad"); }
-  $("cv-selftest").disabled = false;
+    applyModeSuffixes();
+  } catch (e) {
+    state.selfTest = null;
+    setInfo("cv-mode-detail", "Self-test error: " + e.message, "bad");
+  }
+  state.selfTestBusy = false;
+  $("cv-selftest").disabled = cvTask() === "keep";
   $("cv-selftest").textContent = "Self-test modes";
 }
 function updateCvName() {
@@ -1185,12 +1328,13 @@ function modeToken(mode) {
   return map[mode] || mode;
 }
 function updateCvChecks() {
-  const m = state.currentMode;
+  const keep = cvTask() === "keep";
+  const m = keep ? null : state.currentMode;
   const params = state.cvParams || 0;
   const bits = m ? (m.bits || 16) : 16;
   const wrap = $("cv-errors");
   wrap.innerHTML = "";
-  if (!m) { $("cv-run").disabled = true; return; }
+  if (!keep && !m) { $("cv-run").disabled = true; return; }
   const needs = estimateConvertNeeded(params, bits);
   const free = (state.info.disk_free_gb || 0) * 1e9;
   const okDisk = free >= needs;
@@ -1214,9 +1358,9 @@ function updateCvChecks() {
   }
 
   const errors = [];
-  if (m.requires_per_channel && Number($("cv-group").value) !== -1) errors.push("INT8 mode requires group_size = -1.");
-  if (m.moe_only && state.cvInfo && !state.cvInfo.is_moe) errors.push("This mode requires a MoE model.");
-  if (m.available === false) errors.push("Mode not available in the installed NNCF.");
+  if (m && m.requires_per_channel && Number($("cv-group").value) !== -1) errors.push("INT8 mode requires group_size = -1.");
+  if (m && m.moe_only && state.cvInfo && !state.cvInfo.is_moe) errors.push("This mode requires a MoE model.");
+  if (m && m.available === false) errors.push("Mode not available in the installed NNCF.");
   if (!state.cvInfo && !$("cv-text").value.trim() && !$("cv-model").value) errors.push("Choose a model.");
   const tf = state.cvTfreq;
   if (tf && tf.ok === false && tf.mode !== "unknown" && !$("cv-tfreq-auto").checked) {
@@ -1242,6 +1386,7 @@ async function runConvert() {
   const hf = updateHfDerived();
   const m = state.currentMode;
   const src = cvModelId();
+  const task = cvTask();
   const isInt8 = isInt8Mode(m);
   const da = {};
   if ($("cv-awq").checked) da.awq = true;
@@ -1256,8 +1401,8 @@ async function runConvert() {
     download: $("cv-download-first").checked,
     hf_home: hf.home || null,
     hf_hub_cache: hf.hub || null,
-    task: $("cv-task").value.trim(),
-    mode: m ? m.id : "int4_sym",
+    task: state.cvInfo ? state.cvInfo.task : "",
+    mode: task === "keep" ? "none" : (m ? m.id : "int4_sym"),
     group_size: Number($("cv-group").value),
     all_layers: isInt8 ? false : $("cv-all-layers").checked,
     ratio: $("cv-ratio").value ? Number($("cv-ratio").value) : null,
