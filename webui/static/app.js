@@ -66,6 +66,7 @@ async function init() {
   await loadInfo();
   await Promise.all([loadModes(), loadModels()]);
   bindEvents();
+  updateGenaiDevice();
   await loadDrives();
   loadHfDrives();
   initHfDrive();
@@ -350,6 +351,7 @@ function bindEvents() {
       if (r.ok) { appendLog("switched to transformers " + r.version + " — reloading"); await loadModels(); }
       else appendLog("switch failed: " + (r.error || r.output || "?"));
       await loadInfo();
+      await loadModes();
     } catch (e) { appendLog("switch error: " + e.message); }
     setTfBusy(false);
     renderCvTfreq();
@@ -363,6 +365,7 @@ function bindEvents() {
       if (r.ok) { appendLog("restored pinned versions"); await loadModels(); }
       else appendLog("restore failed: " + (r.error || r.output || "?"));
       await loadInfo();
+      await loadModes();
     } catch (e) { appendLog("restore error: " + e.message); }
     setTfBusy(false);
     renderCvTfreq();
@@ -370,6 +373,11 @@ function bindEvents() {
   });
   $("cv-tfreq-auto").addEventListener("change", updateCvChecks);
   $("cv-run").addEventListener("click", runConvert);
+  const genaiCheck = $("cv-genai");
+  if (genaiCheck) genaiCheck.addEventListener("change", updateGenaiDevice);
+  document.querySelectorAll('input[name="cv-genai-device"]').forEach((r) => {
+    r.addEventListener("change", updateGenaiDevice);
+  });
   const cancelTask = () => api("/api/task/cancel", { method: "POST" }).catch(() => {});
   $("task-cancel").addEventListener("click", cancelTask);
   $("task-cancel").disabled = true;
@@ -1109,9 +1117,14 @@ function onTaskChange() {
   if (keep && state.currentMode && state.currentMode.id !== "none") state.prevCompressMode = state.currentMode.id;
   const delRow = $("cv-delete-int-row");
   const delBox = $("cv-delete-int");
+  const delHelp = $("cv-delete-int-help");
   if (delRow) {
     delRow.hidden = keep;
     delRow.style.display = keep ? "none" : "";
+  }
+  if (delHelp) {
+    delHelp.hidden = keep;
+    delHelp.style.display = keep ? "none" : "";
   }
   if (delBox) delBox.checked = !keep;
   controls.forEach((id) => { const n = $(id); if (n) n.disabled = keep; });
@@ -1287,6 +1300,7 @@ async function onModelChange() {
   if (!v) {
     state.cvInfo = null;
     state.cvTfreq = null;
+    state.currentMode = null;
     $("cv-text").value = "";
     renderCvTfreq();
     updateTfreqStageStatus();
@@ -1301,6 +1315,7 @@ async function onModelChange() {
     const modeSel = $("cv-mode");
     if (modeSel) {
       modeSel.value = "";
+      modeSel.disabled = true;
       const gsel = $("cv-group");
       if (gsel) { gsel.innerHTML = ""; gsel.value = ""; }
       $("cv-ratio").disabled = true;
@@ -1311,6 +1326,7 @@ async function onModelChange() {
     setInfo("cv-meta", "This is an already-converted OpenVINO model. Pick a dense source instead.", "bad");
     renderCvTfreq();
     updateTfreqStageStatus();
+    updateCvName();
     updateCvChecks();
     updateFieldState();
     return;
@@ -1331,6 +1347,8 @@ async function onModelChange() {
     const p = v.replace(/^[A-Za-z]:[\\/]/, "");
     $("cv-text").value = p || "";
   }
+  const modeSel = $("cv-mode");
+  if (modeSel) modeSel.disabled = false;
   renderCvTfreq();
   updateTfreqStageStatus();
   updateCvName();
@@ -1407,9 +1425,37 @@ function updateIntermediateHint() {
   const root = state.info && state.info.paths ? state.info.paths.output : "";
   hint.textContent = root ? `${root}\\${base}-fp16-ov` : "";
 }
+function updateGenaiDevice() {
+  const script = $("cv-genai-script");
+  const row = $("cv-genai-device-row");
+  const genai = $("cv-genai");
+  const radio = document.querySelector('input[name="cv-genai-device"]:checked');
+  const device = (radio && radio.value) || "CPU";
+  if (script) {
+    script.textContent =
+      'from ov_converter.genai_test import run_test, format_result; res = run_test(r"T:\\models\\savvadesogle\\<Base>-<mode>-ov", max_new_tokens=24, device="' +
+      device + '"); print(format_result(res))';
+  }
+  if (row && genai) {
+    row.querySelectorAll("input").forEach((el) => { el.disabled = !genai.checked; });
+  }
+}
 function currentBase() {
   const v = $("cv-model").value;
   if (state.cvInfo) return state.cvInfo.name;
+  if (v.startsWith("ov:")) {
+    const p = v.slice(3).replace(/[\\/]+$/, "");
+    let base = p.split(/[\\/]/).pop() || p;
+    const tokens = ["-fp16", "-int2", "-int3", "-int4", "-int8", "-nf4", "-mxfp4", "-mxfp8", "-fp8e4m3", "-cb4", "-int2-mix", "-int3-mix", "-ov"];
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const tok of tokens) {
+        if (base.endsWith(tok)) { base = base.slice(0, -tok.length); changed = true; }
+      }
+    }
+    return base;
+  }
   const t = $("cv-text").value.trim();
   if (t) return t.split(/[\\/]/).pop() || t;
   return "model";
@@ -1551,6 +1597,7 @@ async function runConvert() {
     delete_intermediate: task === "keep" ? false : $("cv-delete-int").checked,
     output_dir: $("cv-outdir").value.trim() || null,
     run_genai_test: $("cv-genai").checked,
+    genai_device: (document.querySelector('input[name="cv-genai-device"]:checked') || { value: "CPU" }).value || "CPU",
     tfreq_auto_install: $("cv-tfreq-auto").checked,
   };
   await startTask("convert", cfg, "/api/convert");
@@ -1666,7 +1713,7 @@ async function startTask(kind, body, url) {
     const wasDl = state.taskKind === "download";
     resetTaskUi();
     if (wasDl) { await updateLocalStatus(); updateDlChecks(); }
-    loadModels(); loadInfo();
+    loadModels(); loadInfo(); loadModes();
   });
   es.onerror = () => { es.close(); $("task-status").textContent = "stream closed"; $("task-status").className = "chip"; resetTaskUi(); };
 }

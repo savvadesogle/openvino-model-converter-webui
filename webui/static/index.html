@@ -178,10 +178,15 @@
     <p class="desc">Result path. The name follows the HF OpenVINO convention &ldquo;&lt;Base&gt;-&lt;mode&gt;-ov&rdquo;, with &ldquo;-ov&rdquo; always last.</p>
     <label>Output directory <input id="cv-outdir" class="mono"></label>
     <label class="check" id="cv-delete-int-row"><input id="cv-delete-int" type="checkbox" checked> Delete intermediate fp16 export after conversion</label>
-    <div class="help">During conversion the model is first exported to a dense fp16 OpenVINO IR, then compressed. That intermediate copy is stored at <span id="cv-intermediate-hint"></span>\&lt;Base&gt;-fp16-ov (the same folder where the final model is written, under savvadesogle). Tick this to delete it after the run (keeps disk tidy); untick to keep it (e.g. to reuse it for several compression runs).</div>
+    <div class="help" id="cv-delete-int-help">During conversion the model is first exported to a dense fp16 OpenVINO IR, then compressed. That intermediate copy is stored at <span id="cv-intermediate-hint"></span>\&lt;Base&gt;-fp16-ov (the same folder where the final model is written, under savvadesogle). Tick this to delete it after the run (keeps disk tidy); untick to keep it (e.g. to reuse it for several compression runs).</div>
     <label class="check"><input id="cv-genai" type="checkbox" checked> Run GenAI end-to-end test after conversion</label>
     <div class="help">After conversion, runs the model through OpenVINO GenAI to verify it works end-to-end (loads the converted dir, generates a short sample, reports tokens/sec).</div>
-    <pre class="code">from ov_converter.genai_test import run_test, format_result
+    <div id="cv-genai-device-row">
+      <label class="check"><input type="radio" name="cv-genai-device" id="cv-genai-device-cpu" value="CPU" checked> Run GenAI test on CPU</label>
+      <label class="check"><input type="radio" name="cv-genai-device" id="cv-genai-device-gpu" value="GPU"> Run GenAI test on GPU</label>
+      <div class="help">Device the OpenVINO GenAI end-to-end test runs on after conversion. CPU is always available; GPU (if present) is faster. The example script below updates to match your choice.</div>
+    </div>
+    <pre class="code" id="cv-genai-script">from ov_converter.genai_test import run_test, format_result
 
 res = run_test(r"T:\models\savvadesogle\&lt;Base&gt;-&lt;mode&gt;-ov", max_new_tokens=24)
 print(format_result(res))</pre>

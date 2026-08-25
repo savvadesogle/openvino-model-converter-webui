@@ -37,6 +37,7 @@ class ConvertConfig:
     intermediate_dir: str | None = None
     run_genai_test: bool = True
     prompt: str | None = None
+    genai_device: str = "CPU"
     tfreq_auto_install: bool = False
     keep_fp16_export: bool = False
     download_only: bool = False
@@ -294,7 +295,7 @@ def run(cfg: ConvertConfig, emit: Emitter | None = None) -> dict:
             emit.start("genai_test")
             try:
                 from ov_converter.genai_test import run_test, format_result
-                res = run_test(out_dir, prompt=cfg.prompt,
+                res = run_test(out_dir, prompt=cfg.prompt, device=cfg.genai_device,
                                log=lambda t: emit.log(t, "genai_test"))
                 result["genai_test"] = res
                 emit.log(format_result(res), "genai_test")

@@ -1,6 +1,6 @@
 # Core inference / conversion
-# 2026.4.0 pre-release dev builds installed from the OpenVINO rolling index:
-#   pip install --extra-index-url https://storage.openvino.ai/repository/simple/ -r requirements.txt
+# 2026.4.0 pre-release dev builds installed from the OpenVINO nightly index:
+#   uv pip install --pre -U openvino openvino-genai --extra-index-url https://storage.openvinotoolkit.org/simple/wheels/nightly
 openvino==2026.4.0.dev20260814
 openvino-genai==2026.4.0.0.dev20260814
 openvino-tokenizers==2026.4.0.0.dev20260814

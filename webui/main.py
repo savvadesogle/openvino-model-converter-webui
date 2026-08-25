@@ -63,6 +63,7 @@ class ConvertIn(BaseModel):
     output_dir: str | None = None
     run_genai_test: bool = True
     prompt: str | None = None
+    genai_device: str = "CPU"
     tfreq_auto_install: bool = False
     download_only: bool = False
     hf_home: str | None = None

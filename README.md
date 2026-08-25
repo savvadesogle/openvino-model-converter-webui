@@ -29,12 +29,14 @@ source (dense BF16) --export--> <Base>-fp16-ov --NNCF compress--> <Base>-int2-ov
 
 ```bash
 python -m venv .venv && .venv\Scripts\activate
-pip install --extra-index-url https://storage.openvino.ai/repository/simple/ -r requirements.txt
+uv pip install --pre -U openvino openvino-genai --extra-index-url https://storage.openvinotoolkit.org/simple/wheels/nightly
+uv pip install "optimum-intel[openvino] @ git+https://github.com/huggingface/optimum-intel"
+uv pip install -r requirements.txt
 uvicorn webui.main:app --host 127.0.0.1 --port 8000
 # open http://127.0.0.1:8000
 ```
 
-(requirements.txt pins 2026.4.0 dev builds, so pip needs the OpenVINO rolling index above.)
+(OpenVINO dev builds come from the nightly index — `storage.openvinotoolkit.org/simple/wheels/nightly` — with `--pre`; optimum-intel installs from the huggingface git repo.)
 
 The app auto-detects the per-model transformers version each model requires and can switch
 the shared Python env from the UI (with a restore to the pinned versions afterwards).
