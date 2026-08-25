@@ -58,7 +58,7 @@ main { display: flex; flex-direction: column; gap: 14px; max-width: 1000px; }
 .card.done { background: #f2fbf6; border-color: var(--mint-2); }
 .card.bad { background: #fbefef; border: 1px solid var(--err); }
 input.field-ok, select.field-ok, label.field-ok { background: #eff7f2; border-color: var(--mint-2); }
-div.card.field-ok { background: #f2fbf6; border: 1px solid var(--mint-2); }
+div.card.field-ok { background: #f2fbf6; }
 .desc, .hint { margin: 0 0 10px; color: var(--muted); font-size: 12.5px; }
 .help { font-size: 12px; color: var(--muted); margin-top: 2px; }
 
@@ -68,6 +68,8 @@ label { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; colo
 label.check { flex-direction: row; align-items: center; gap: 8px; margin-top: 8px; color: var(--ink); }
 label.check input { width: auto; margin: 0; }
 input[type="checkbox"] { accent-color: #7d74c4; width: auto; }
+.data-unsupported { opacity: .45; }
+.data-unsupported input { cursor: not-allowed; }
 
 input, select {
   border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px;
@@ -75,6 +77,7 @@ input, select {
 }
 input:focus, select:focus { outline: 2px solid var(--mint-2); border-color: transparent; }
 .mono { font-family: ui-monospace, Consolas, monospace; font-size: 12px; }
+.code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; background: #f4f1ea; border: 1px solid var(--line); padding: 8px 10px; white-space: pre-wrap; }
 
 .fill-link { color: #8b7fd6; text-decoration: underline dashed; text-underline-offset: 3px; cursor: pointer; font-family: inherit; }
 .fill-link:hover { text-decoration: underline; }
@@ -159,6 +162,8 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .banner.bad { background: #fbefef; border-color: var(--err); color: #a05a3a; }
 .banner.warn { background: #fdf6e3; border-color: #e6c76a; color: #8a6d1a; }
 .card.pending { background: #fdf9ec; border-color: #e6c76a; }
+div.card.state-ok { background: #f2fbf6; }
+div.card.state-warn { background: #fdf9ec; }
 .banner.neutral { background: var(--bg); border-color: var(--line); color: var(--muted); }
 
 .resources { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }

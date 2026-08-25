@@ -1099,6 +1099,10 @@ function onTaskChange() {
   controls.forEach((id) => { const n = $(id); if (n) n.disabled = keep; });
   if (modeCard) modeCard.hidden = keep;
   if (compCard) compCard.hidden = keep;
+  const daBlock = document.querySelector("details.attach-above");
+  if (daBlock) daBlock.hidden = keep;
+  const daControls = ["cv-awq", "cv-scale", "cv-gptq", "cv-lora", "cv-dataset", "cv-nsamples"];
+  daControls.forEach((id) => { const n = $(id); if (n) n.disabled = keep; });
   const sel = $("cv-mode");
   if (sel) {
     const want = keep ? "none"
@@ -1107,6 +1111,7 @@ function onTaskChange() {
     sel.value = [...sel.options].some((o) => o.value === want) ? want : "";
   }
   onModeChange();
+  updateDataAware();
   updateCvChecks();
   updateFieldState();
 }
@@ -1130,13 +1135,32 @@ function updateFieldState() {
     setOk(compCard, false);
   } else {
     const allOk = modelOk && modeOk && groupOk && backupOk;
-    setOk($("cv-model"), allOk);
+    setOk($("cv-model"), modelOk);
+    setOk(modelCard, modelOk);
     setOk($("cv-mode"), allOk);
+    setOk(modeCard, allOk);
     setOk($("cv-group"), allOk);
     setOk($("cv-backup"), allOk);
     setOk(compCard, allOk);
-    setOk(modelCard, false);
   }
+}
+function updateDataAware() {
+  const keep = cvTask() === "keep";
+  const mode = keep ? null : state.currentMode;
+  const incompatible = ["none", "int8_sym", "int8_asym", "cb4", "mxfp4", "mxfp8_e4m3", "int2_mix", "int3_mix"];
+  const compat = !!mode && incompatible.indexOf(mode.id) === -1;
+  const on = !keep && compat;
+  const methods = ["cv-awq", "cv-scale", "cv-gptq", "cv-lora"];
+  methods.forEach((id) => {
+    const cb = $(id);
+    const label = cb ? cb.closest("label") : null;
+    if (label) label.classList.toggle("data-unsupported", !on);
+    if (cb) cb.disabled = !on;
+  });
+  const ds = $("cv-dataset");
+  const ns = $("cv-nsamples");
+  if (ds) ds.disabled = !on;
+  if (ns) ns.disabled = !on;
 }
 function autoSelfTest(modelValue) {
   if (state.selfTestBusy) return;
@@ -1172,6 +1196,11 @@ function renderCvTfreq() {
   const t = state.cvTfreq;
   const installBtn = $("cv-tf-install");
   const restoreBtn = $("cv-tf-restore");
+  const runCard = $("cv-run") ? $("cv-run").closest(".card") : null;
+  if (runCard) {
+    runCard.classList.toggle("state-ok", !!(t && t.ok));
+    runCard.classList.toggle("state-warn", !!(t && t.ok === false));
+  }
   if (!t || t.mode === "unknown") {
     box.className = "banner";
     box.textContent = "";
@@ -1185,6 +1214,7 @@ function renderCvTfreq() {
   } else {
     box.className = "banner show warn";
     box.textContent = t.reason + (t.recommended ? "  —  use Install to switch to " + t.recommended : "");
+    if (!$("cv-tfreq-auto").checked) $("cv-tfreq-auto").checked = true;
   }
   if (installBtn) installBtn.disabled = state.tfBusy || t.ok || !t.recommended;
   if (restoreBtn) restoreBtn.disabled = state.tfBusy;
@@ -1243,6 +1273,7 @@ function onModeChange() {
     setInfo("cv-mode-detail", "", "");
     updateCvName();
     updateCvChecks();
+    updateDataAware();
     updateFieldState();
     return;
   }
@@ -1264,6 +1295,7 @@ function onModeChange() {
     (m.help ? "\n" + m.help : ""), "ok");
   updateCvName();
   updateCvChecks();
+  updateDataAware();
   updateFieldState();
 }
 async function runSelfTest() {
@@ -1367,6 +1399,11 @@ function updateCvChecks() {
   if (tf && tf.ok === false && tf.mode !== "unknown" && !$("cv-tfreq-auto").checked) {
     errors.push("Transformers " + (tf.required || "?") + " required but " + (tf.installed || "none") + " installed — enable auto-install or install it first.");
   }
+  if (!keep && state.currentMode && ["none", "int8_sym", "int8_asym", "cb4", "mxfp4", "mxfp8_e4m3", "int2_mix", "int3_mix"].indexOf(state.currentMode.id) === -1) {
+    if (($("cv-awq").checked || $("cv-gptq").checked || $("cv-lora").checked) && !$("cv-dataset").value.trim()) {
+      errors.push("AWQ/GPTQ/LoRA correction need a calibration dataset (.npy) — provide it or disable the method.");
+    }
+  }
   if (errors.length) { wrap.innerHTML = ""; errors.forEach((e) => wrap.appendChild(el("div", null, "⚠ " + e))); }
   $("cv-run").disabled = !(okDisk && errors.length === 0);
 }
@@ -1390,12 +1427,15 @@ async function runConvert() {
   const task = cvTask();
   const isInt8 = isInt8Mode(m);
   const da = {};
-  if ($("cv-awq").checked) da.awq = true;
-  if ($("cv-scale").checked) da.scale_estimation = true;
-  if ($("cv-gptq").checked) da.gptq = true;
-  if ($("cv-lora").checked) da.lora_correction = true;
-  const ds = $("cv-dataset").value.trim();
-  if (ds) { da.dataset = ds; da.num_samples = Number($("cv-nsamples").value) || 128; }
+  if ($("cv-awq").checked && !$("cv-awq").disabled) da.awq = true;
+  if ($("cv-scale").checked && !$("cv-scale").disabled) da.scale_estimation = true;
+  if ($("cv-gptq").checked && !$("cv-gptq").disabled) da.gptq = true;
+  if ($("cv-lora").checked && !$("cv-lora").disabled) da.lora_correction = true;
+  const ds = $("cv-dataset");
+  const dsEnabled = ds && !ds.disabled;
+  const ns = $("cv-nsamples");
+  const dsVal = dsEnabled ? (ds.value || "").trim() : "";
+  if (dsVal) { da.dataset = dsVal; da.num_samples = ns && !ns.disabled ? (Number(ns.value) || 128) : 128; }
   const cfg = {
     model_id: src.id || currentBase(),
     model_path: src.path,

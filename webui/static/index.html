@@ -125,7 +125,12 @@
     <h2>Compression</h2>
     <p class="desc">Group size shares one scale per group; -1 means per-channel. INT8 modes require per-channel. Ratio/backup apply to single-pass mixed precision.</p>
     <div class="grid">
-      <label>Group size <select id="cv-group"></select><span class="help">Weights are grouped; one scale is shared per group. -1 = per-channel (one scale per row).</span></label>
+      <label>Group size <select id="cv-group"></select><span class="help">Group size = how many weights share one scale. Larger = smaller file but lower accuracy.
+        &bull; -1 (per-channel): one scale per output row — best accuracy, largest size.
+        &bull; 32: very small groups — high accuracy, less compression.
+        &bull; 64/128: balanced default (128 for INT4, 64 for INT2/INT3/nf4).
+        &bull; 256: more aggressive compression, may lose quality.
+        INT8/mxfp/cb4 force specific values (INT8 = -1, mxfp = 32).</span></label>
       <label>Backup precision <select id="cv-backup">
         <option value="none">none</option>
         <option value="int8_sym">int8_sym</option>
@@ -142,11 +147,12 @@
 
   <details class="card attach-above">
     <summary>Data-aware methods (optional)</summary>
+    <div class="help">Available only when &ldquo;Compress via NNCF&rdquo; and an INT4/INT2/INT3/nf4/fp8 mode is selected. Not available for INT8, cb4, mxfp (fixed), or mixed (int2-mix/int3-mix) modes. AWQ, GPTQ and LoRA correction need a calibration dataset (.npy); Scale estimation runs without one.</div>
     <div class="grid">
-      <label class="check"><input id="cv-awq" type="checkbox"> AWQ</label>
-      <label class="check"><input id="cv-scale" type="checkbox"> Scale estimation</label>
-      <label class="check"><input id="cv-gptq" type="checkbox"> GPTQ</label>
-      <label class="check"><input id="cv-lora" type="checkbox"> LoRA correction</label>
+      <label class="check data-unsupported"><input id="cv-awq" type="checkbox"> AWQ</label>
+      <label class="check data-unsupported"><input id="cv-scale" type="checkbox"> Scale estimation</label>
+      <label class="check data-unsupported"><input id="cv-gptq" type="checkbox"> GPTQ</label>
+      <label class="check data-unsupported"><input id="cv-lora" type="checkbox"> LoRA correction</label>
     </div>
     <div class="grid">
       <label>Calibration dataset (.npy) <input id="cv-dataset" placeholder="path/to/inputs.npy"></label>
@@ -158,6 +164,7 @@
     <h2>Submodels</h2>
     <p class="desc">For VLMs: compress only the language model + text embeddings and keep vision in fp16 (faster, and vision is tiny).</p>
     <label class="check"><input id="cv-only-text" type="checkbox" checked> Compress only language_model + text_embeddings (keep vision fp16)</label>
+    <div class="help">Use for VLMs (vision-language models): compress only the language model + text embeddings and keep the (tiny) vision submodels in fp16 — much faster conversion with negligible size difference. For text-only models this has no effect. Disable it only if you want absolutely every submodel compressed.</div>
   </div>
 
   <div class="card">
@@ -166,6 +173,11 @@
     <label>Output directory <input id="cv-outdir" class="mono"></label>
     <label class="check"><input id="cv-delete-int" type="checkbox" checked> Delete intermediate fp16 export after conversion</label>
     <label class="check"><input id="cv-genai" type="checkbox" checked> Run GenAI end-to-end test after conversion</label>
+    <div class="help">After conversion, runs the model through OpenVINO GenAI to verify it works end-to-end (loads the converted dir, generates a short sample, reports tokens/sec).</div>
+    <pre class="code">from ov_converter.genai_test import run_test, format_result
+
+res = run_test(r"T:\models\savvadesogle\&lt;Base&gt;-&lt;mode&gt;-ov", max_new_tokens=24)
+print(format_result(res))</pre>
   </div>
 
   <div class="card">
@@ -177,6 +189,7 @@
     <div class="grid">
       <label class="check"><input id="cv-tfreq-auto" type="checkbox"> Auto-install required transformers version (swaps shared env, restores after)</label>
       <div class="row"><button id="cv-tf-install" class="secondary" disabled>Install required transformers</button><button id="cv-tf-restore" class="secondary" disabled>Restore pinned versions</button></div>
+      <div class="help">This project pins exact library versions in requirements.txt. &ldquo;Install required transformers&rdquo; (or auto-install) temporarily swaps the shared Python env to a different transformers version needed by a specific model. Click &ldquo;Restore pinned versions&rdquo; to switch the env back to the pinned requirements.txt versions — use it after a manual install, or to clean up a swap that didn't finish.</div>
     </div>
     <div class="row"><button id="cv-run" class="primary" disabled>Convert</button><span class="spinner" id="cv-spinner" hidden></span><div class="progress" id="cv-progress"><div class="fill"></div></div><button id="cv-cancel" class="danger" hidden>Cancel</button></div>
   </div>
