@@ -72,6 +72,7 @@ async function init() {
   renderTaskSelect();
   renderModes();
   renderModelSelect();
+  onTaskChange();
   bindTaskStream();
 }
 async function loadInfo() {
@@ -1106,6 +1107,10 @@ function onTaskChange() {
   const compCard = $("cv-group") ? $("cv-group").closest(".card") : null;
   const controls = ["cv-mode", "cv-selftest", "cv-group", "cv-backup", "cv-ratio", "cv-all-layers"];
   if (keep && state.currentMode && state.currentMode.id !== "none") state.prevCompressMode = state.currentMode.id;
+  const delRow = $("cv-delete-int-row");
+  const delBox = $("cv-delete-int");
+  if (delRow) delRow.hidden = keep;
+  if (delBox) delBox.checked = !keep;
   controls.forEach((id) => { const n = $(id); if (n) n.disabled = keep; });
   if (modeCard) modeCard.hidden = keep;
   if (compCard) compCard.hidden = keep;
@@ -1124,6 +1129,7 @@ function onTaskChange() {
   updateDataAware();
   updateCvChecks();
   updateFieldState();
+  updateTfreqStageStatus();
 }
 function updateFieldState() {
   const keep = cvTask() === "keep";
@@ -1244,7 +1250,7 @@ function renderCvTfreq() {
   }
   if (t.ok) {
     box.className = "banner show ok";
-    box.textContent = "Transformers " + (t.installed || "?") + " satisfies " + t.required + " — OK";
+    box.textContent = "Transformers status: ✓ OK — " + (t.installed || "?") + " satisfies " + t.required;
     const cvTfreqAuto = $("cv-tfreq-auto");
     if (cvTfreqAuto) { cvTfreqAuto.disabled = true; cvTfreqAuto.checked = false; }
   } else {
@@ -1256,6 +1262,22 @@ function renderCvTfreq() {
   if (installBtn) installBtn.disabled = state.tfBusy || t.ok || !t.recommended;
   if (restoreBtn) restoreBtn.disabled = state.tfBusy || t.ok;
 }
+function updateTfreqStageStatus() {
+  if (state.taskActive) return;
+  const n = document.querySelector('[data-stage="tfreq"]');
+  if (!n) return;
+  const t = state.cvTfreq;
+  n.classList.remove("done", "fail");
+  if (t && t.ok) {
+    n.classList.add("done");
+    n.title = "Transformers version OK — " + (t.installed || "?") + " satisfies " + t.required;
+  } else if (t && t.ok === false) {
+    n.classList.add("fail");
+    n.title = "Transformers version NOT OK — needs " + (t.required || "?") + ", installed " + (t.installed || "none");
+  } else {
+    n.title = "Transformers version unknown for the selected model";
+  }
+}
 async function onModelChange() {
   const v = $("cv-model").value;
   $("cv-meta").innerHTML = "";
@@ -1264,6 +1286,7 @@ async function onModelChange() {
     state.cvTfreq = null;
     $("cv-text").value = "";
     renderCvTfreq();
+    updateTfreqStageStatus();
     updateCvChecks();
     updateFieldState();
     return;
@@ -1284,6 +1307,7 @@ async function onModelChange() {
     }
     setInfo("cv-meta", "This is an already-converted OpenVINO model. Pick a dense source instead.", "bad");
     renderCvTfreq();
+    updateTfreqStageStatus();
     updateCvChecks();
     updateFieldState();
     return;
@@ -1305,6 +1329,7 @@ async function onModelChange() {
     $("cv-text").value = p || "";
   }
   renderCvTfreq();
+  updateTfreqStageStatus();
   updateCvName();
   updateCvChecks();
   updateFieldState();
@@ -1520,7 +1545,7 @@ async function runConvert() {
     backup: $("cv-backup").value,
     data_aware: da,
     only_text: $("cv-only-text").checked,
-    delete_intermediate: $("cv-delete-int").checked,
+    delete_intermediate: task === "keep" ? false : $("cv-delete-int").checked,
     output_dir: $("cv-outdir").value.trim() || null,
     run_genai_test: $("cv-genai").checked,
     tfreq_auto_install: $("cv-tfreq-auto").checked,
@@ -1545,6 +1570,7 @@ function renderStages(kind) {
   for (const s of list) {
     const n = el("div", "stage", "");
     n.dataset.stage = s;
+    n.title = "Run progress marker — lit green when the running task passes this step";
     n.appendChild(el("span", "dot"));
     n.appendChild(document.createTextNode(s));
     box.appendChild(n);
@@ -1558,6 +1584,7 @@ function ensureStage(name) {
   const box = $("stages");
   const n = el("div", "stage", "");
   n.dataset.stage = name;
+  n.title = "Run progress marker — lit green when the running task passes this step";
   n.appendChild(el("span", "dot"));
   n.appendChild(document.createTextNode(name));
   box.appendChild(n);

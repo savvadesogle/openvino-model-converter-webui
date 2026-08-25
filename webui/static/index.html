@@ -108,6 +108,7 @@
     <div class="row">
       <select id="cv-task"></select>
     </div>
+    <span class="help">Transformers compatibility:</span>
     <div id="cv-tfreq" class="banner"></div>
   </div>
 
@@ -176,7 +177,7 @@
     <h2>Output</h2>
     <p class="desc">Result path. The name follows the HF OpenVINO convention &ldquo;&lt;Base&gt;-&lt;mode&gt;-ov&rdquo;, with &ldquo;-ov&rdquo; always last.</p>
     <label>Output directory <input id="cv-outdir" class="mono"></label>
-    <label class="check"><input id="cv-delete-int" type="checkbox" checked> Delete intermediate fp16 export after conversion</label>
+    <label class="check" id="cv-delete-int-row"><input id="cv-delete-int" type="checkbox" checked> Delete intermediate fp16 export after conversion</label>
     <div class="help">During conversion the model is first exported to a dense fp16 OpenVINO IR, then compressed. That intermediate copy is stored at <span id="cv-intermediate-hint"></span>\&lt;Base&gt;-fp16-ov (the same folder where the final model is written, under savvadesogle). Tick this to delete it after the run (keeps disk tidy); untick to keep it (e.g. to reuse it for several compression runs).</div>
     <label class="check"><input id="cv-genai" type="checkbox" checked> Run GenAI end-to-end test after conversion</label>
     <div class="help">After conversion, runs the model through OpenVINO GenAI to verify it works end-to-end (loads the converted dir, generates a short sample, reports tokens/sec).</div>
