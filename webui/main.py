@@ -388,4 +388,11 @@ async def api_stream(task_id: str | None = None):
     return StreamingResponse(gen(), media_type="text/event-stream")
 
 
-app.mount("/static", StaticFiles(directory=str(STATIC)), name="static")
+class NoCacheStaticFiles(StaticFiles):
+    def file_response(self, *args, **kwargs):
+        resp = super().file_response(*args, **kwargs)
+        resp.headers.setdefault("Cache-Control", "no-cache")
+        return resp
+
+
+app.mount("/static", NoCacheStaticFiles(directory=str(STATIC)), name="static")

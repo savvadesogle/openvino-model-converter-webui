@@ -1109,7 +1109,10 @@ function onTaskChange() {
   if (keep && state.currentMode && state.currentMode.id !== "none") state.prevCompressMode = state.currentMode.id;
   const delRow = $("cv-delete-int-row");
   const delBox = $("cv-delete-int");
-  if (delRow) delRow.hidden = keep;
+  if (delRow) {
+    delRow.hidden = keep;
+    delRow.style.display = keep ? "none" : "";
+  }
   if (delBox) delBox.checked = !keep;
   controls.forEach((id) => { const n = $(id); if (n) n.disabled = keep; });
   if (modeCard) modeCard.hidden = keep;
