@@ -142,7 +142,7 @@ def api_drives():
 
 @app.get("/api/modes")
 def api_modes():
-    return {"modes": modes.modes_dict()}
+    return {"modes": modes.modes_dict(), "nncf_version": modes.resolved_nncf_version()}
 
 
 class MkdirIn(BaseModel):

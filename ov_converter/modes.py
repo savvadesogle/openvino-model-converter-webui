@@ -2,11 +2,14 @@
 from __future__ import annotations
 
 import functools
+import json
+import subprocess
 from dataclasses import dataclass, asdict
 
 import nncf
 from nncf import CompressWeightsMode
 
+import ov_converter.settings as S
 from ov_converter.naming import MODE_TOKENS, MODE_HELP
 
 
@@ -49,9 +52,47 @@ OV_SUPPORTED: dict[str, dict] = {
 _ENUM_MEMBERS = {m.value: m for m in CompressWeightsMode}
 
 
+@functools.lru_cache(maxsize=1)
+def _resolved_data() -> dict | None:
+    """CompressWeightsMode members + nncf version from the resolved (subprocess) env."""
+    script = (
+        "import sys; sys.path.insert(0, r'%s'); "
+        "import ov_converter._modes_probe as p; p.main()" % S.PROJECT_DIR
+    )
+    try:
+        r = subprocess.run([S.resolve_python(), "-c", script],
+                           capture_output=True, text=True, encoding="utf-8",
+                           errors="replace", timeout=180, cwd=str(S.PROJECT_DIR))
+    except Exception:  # noqa: BLE001
+        return None
+    lines = [ln for ln in (r.stdout or "").splitlines() if ln.strip()]
+    if r.returncode != 0 or not lines:
+        return None
+    try:
+        data = json.loads(lines[-1])
+    except Exception:  # noqa: BLE001
+        return None
+    if "error" in data:
+        return None
+    return data
+
+
+def _resolved_members() -> list[str] | None:
+    data = _resolved_data()
+    return data.get("members") if data else None
+
+
+def resolved_nncf_version() -> str | None:
+    data = _resolved_data()
+    return data.get("nncf") if data else None
+
+
 def _enum_available(mode_id: str) -> bool:
     if mode_id in ("int2_mix", "int3_mix", "none"):
         return True  # composite modes, always available
+    resolved = _resolved_members()
+    if resolved is not None:
+        return mode_id in resolved
     return mode_id in _ENUM_MEMBERS
 
 
