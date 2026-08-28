@@ -1736,6 +1736,9 @@ async function runTest() {
   const box = $("ts-errors");
   if (box) { box.innerHTML = ""; errors.forEach((e) => box.appendChild(el("div", null, "⚠ " + e))); }
   if (errors.length) return;
+  const resBox = $("ts-results");
+  if (resBox) { resBox.className = "info"; resBox.innerHTML = ""; }
+  setTestStatus("", "");
   const cfg = {
     baseline,
     candidate,
@@ -1749,6 +1752,79 @@ async function runTest() {
   await startTask("test", cfg, "/api/test");
 }
 
+const TEST_LABELS = { e2e: "End-to-end GenAI smoke", perplexity: "Perplexity", side_by_side: "Side-by-side generation" };
+const TEST_STATUS_MARK = { ok: "✓", warn: "⚠", bad: "✕", na: "—" };
+function truncateText(s, n) {
+  s = String(s == null ? "" : s);
+  return s.length > n ? s.slice(0, n) + "\u2026" : s;
+}
+function testStatusTagHtml(status) {
+  const s = status || "na";
+  const mark = TEST_STATUS_MARK[s] != null ? TEST_STATUS_MARK[s] : "—";
+  const text = mark + " " + esc(String(s).toUpperCase());
+  if (s === "ok") return "<span class=\"tag support-ok\">" + text + "</span>";
+  if (s === "bad") return "<span class=\"tag support-bad\">" + text + "</span>";
+  if (s === "na") return "<span class=\"tag support-unknown\">" + text + "</span>";
+  return "<span class=\"tag\" style=\"background:#fdf6e3;color:#8a6d1a\">" + text + "</span>";
+}
+function normalizeTestList(tests) {
+  const keys = Object.keys(tests);
+  const order = ["e2e", "perplexity", "side_by_side"];
+  const ordered = order.filter((k) => keys.indexOf(k) !== -1);
+  const rest = keys.filter((k) => order.indexOf(k) === -1);
+  return ordered.concat(rest).map((k) => Object.assign({ name: k }, tests[k]));
+}
+function renderTestResults(tests) {
+  const box = $("ts-results");
+  if (!box) return;
+  setInfo("ts-results", "");
+  const list = Array.isArray(tests)
+    ? tests.slice()
+    : (tests && typeof tests === "object" ? normalizeTestList(tests) : []);
+  if (!list.length) { box.className = "info show neutral"; box.textContent = "No test results returned."; return; }
+  let html = "<table class=\"mini-table\"><thead><tr><th>Test</th><th>Result</th><th>Status</th></tr></thead><tbody>";
+  for (const t of list) {
+    const label = t.label || TEST_LABELS[t.id || t.name] || t.id || t.name || "test";
+    const status = t.status || "na";
+    const mark = TEST_STATUS_MARK[status] != null ? TEST_STATUS_MARK[status] : "—";
+    const summary = t.summary != null ? String(t.summary)
+      : (Array.isArray(t.details) && t.details.length ? String(t.details[0]) : "—");
+    html += "<tr><td>" + esc(label) + "</td><td>" + mark + " " + esc(summary) + "</td><td>" + testStatusTagHtml(status) + "</td></tr>";
+  }
+  html += "</tbody></table>";
+  for (const t of list) {
+    if (Array.isArray(t.details) && t.details.length) {
+      const label = t.label || TEST_LABELS[t.id || t.name] || t.id || t.name || "test";
+      html += "<div class=\"help\" style=\"white-space:pre-wrap\"><b>" + esc(label) + ":</b> " + esc(t.details.join("\n")) + "</div>";
+    }
+  }
+  const sbs = list.find((t) => (t.id === "side_by_side" || t.kind === "side_by_side" || t.name === "side_by_side") && Array.isArray(t.prompts) && t.prompts.length);
+  if (sbs) {
+    html += "<table class=\"mini-table\" style=\"margin-top:12px\"><thead><tr><th>Prompt</th><th>Baseline</th><th>Candidate</th><th>FDT</th><th>SDT</th><th>Exact</th></tr></thead><tbody>";
+    for (const p of sbs.prompts) {
+      html += "<tr><td>" + esc(p.prompt) + "</td>" +
+        "<td class=\"code\" title=\"" + esc(p.baseline) + "\">" + esc(truncateText(p.baseline, 120)) + "</td>" +
+        "<td class=\"code\" title=\"" + esc(p.candidate) + "\">" + esc(truncateText(p.candidate, 120)) + "</td>" +
+        "<td class=\"mono\">" + esc(p.fdt) + "</td>" +
+        "<td class=\"mono\">" + esc(p.sdt) + "</td>" +
+        "<td class=\"mono\">" + esc(p.exact) + "</td></tr>";
+    }
+    html += "</tbody></table>";
+    if (sbs.explain) html += "<div class=\"help\">" + esc(sbs.explain) + "</div>";
+  }
+  box.className = "info show ok";
+  box.innerHTML = html;
+}
+function setTestStatus(text, cls) {
+  const s = $("ts-status");
+  if (!s) return;
+  s.textContent = text;
+  s.className = "banner " + (cls || "neutral");
+  s.hidden = !text;
+  if (text) s.classList.add("show");
+  else s.classList.remove("show");
+}
+
 /* ---------------------------------------------------------------- Task streaming */
 const STAGES = ["validate", "download", "tfreq", "export", "compress", "package", "tokenizer", "genai_test"];
 const STAGES_BY_KIND = {
@@ -1760,6 +1836,13 @@ const STAGE_DONE_LABEL = {
   export: "exported",
   compress: "compressed", package: "packaged", tokenizer: "tokenizer ok", genai_test: "genai test ok",
   testing: "testing done", e2e: "e2e done", perplexity: "perplexity done", side_by_side: "side-by-side done"
+};
+const STAGE_FRIENDLY_LABEL = {
+  testing: "preparing",
+  corpus: "loading corpus",
+  e2e: "end-to-end GenAI smoke",
+  perplexity: "perplexity",
+  side_by_side: "side-by-side generation",
 };
 function bindTaskStream() {
   pollStatus();
@@ -1888,6 +1971,8 @@ function resetTaskUi() {
     bar.classList.remove("indeterminate");
     bar.querySelector(".fill").style.width = "0%";
   });
+  const ts = $("ts-status");
+  if (ts) { ts.hidden = true; ts.className = "banner"; ts.textContent = ""; }
 }
 function onTaskLine(line) {
   if (line == null) return;
@@ -1895,9 +1980,20 @@ function onTaskLine(line) {
   if (ev) {
     if (ev.ev === "STAGE") {
       const [status, ...rest] = ev.payload.split(" ");
-      if (status === "done") { setStage(ev.stage, "done"); appendLog("✔ " + (STAGE_DONE_LABEL[ev.stage] || ev.stage) + " " + rest.join(" ")); }
-      else if (status === "fail") { setStage(ev.stage, "fail"); appendLog("✕ " + ev.stage + " " + rest.join(" ")); }
-      else { setStage(ev.stage, "running"); appendLog("▶ " + ev.stage); }
+      const label = STAGE_FRIENDLY_LABEL[ev.stage] || ev.stage;
+      if (status === "done") {
+        setStage(ev.stage, "done");
+        appendLog("✔ " + (STAGE_DONE_LABEL[ev.stage] || ev.stage) + " " + rest.join(" "));
+        if (state.taskKind === "test") setTestStatus("✔ " + label + " done", "ok");
+      } else if (status === "fail") {
+        setStage(ev.stage, "fail");
+        appendLog("✕ " + ev.stage + " " + rest.join(" "));
+        if (state.taskKind === "test") setTestStatus("✕ " + label + " failed", "bad");
+      } else {
+        setStage(ev.stage, "running");
+        appendLog("▶ " + ev.stage);
+        if (state.taskKind === "test") setTestStatus("▶ Running: " + ev.stage + " — " + label, "neutral");
+      }
     } else if (ev.ev === "LOG") {
       appendLog(ev.payload);
     } else if (ev.ev === "PROGRESS") {
@@ -1909,12 +2005,16 @@ function onTaskLine(line) {
           el.querySelector(".fill").style.width = Math.max(0, Math.min(100, pct)) + "%";
         }
       }
+      if (state.taskKind === "test") {
+        const f = $("ts-progress").querySelector(".fill");
+        if (f) f.style.width = pct + "%";
+      }
     } else if (ev.ev === "META") {
       try {
         const r = JSON.parse(ev.payload);
         if (r.tests) {
-          setInfo("ts-results", "Test results:\n" + JSON.stringify(r.tests, null, 1), "ok");
-          appendLog("\n— test results —\n" + JSON.stringify(r.tests, null, 1));
+          renderTestResults(r.tests);
+          appendLog("\n— test results —\n" + JSON.stringify(r.tests));
         } else if (r.genai_test) {
           appendLog("\n— result —\noutput: " + (r.output_dir || "?") + "\n" + JSON.stringify(r.genai_test, null, 1));
         } else {

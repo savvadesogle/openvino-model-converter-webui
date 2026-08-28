@@ -4,6 +4,10 @@ Runs end-to-end smoke (e2e), causal-LM perplexity on a bundled corpus, and a
 side-by-side token-overlap check (First/Sum Divergent Tokens) between the two
 OpenVINO IR directories.
 
+Perplexity handles both text-only dirs (openvino_model.xml) and VLM dirs, where
+the standalone text decoder (openvino_language_model.xml) plus the in-dir text
+embeddings model are loaded and evaluated.
+
 Emits `@@EVENT stage | payload` markers on stdout for the web UI to consume.
 Run with:  python -m ov_converter.eval config.json
 """
@@ -51,6 +55,10 @@ class Emitter:
     def log(self, text: str, stage: str | None = None) -> None:
         self.emit("LOG", stage or self.current, text)
 
+    def progress(self, pct: int) -> None:
+        pct = max(0, min(100, int(pct)))
+        self.emit("PROGRESS", None, str(pct))
+
     def start(self, stage: str) -> None:
         self.emit("STAGE", stage, "start")
 
@@ -95,32 +103,100 @@ def corpus_lines() -> list[str]:
     return [ln.strip() for ln in path.read_text(encoding="utf-8").splitlines() if ln.strip()]
 
 
+def _resolve_language_ir(d: Path) -> str | None:
+    for name in ("openvino_model.xml", "openvino_language_model.xml"):
+        if (d / name).exists():
+            return name
+    return None
+
+
+def _vlm_lm_logits(lm, emb_req, input_ids):
+    """Run the standalone VLM text decoder on embedded token ids -> logits."""
+    import numpy as np
+    import torch
+
+    emb_in = emb_req.inputs[0].get_any_name()
+    emb_out = emb_req.outputs[0].get_any_name()
+    ids = input_ids.cpu().numpy().astype(np.int64)
+    embeds = emb_req({emb_in: ids})[emb_out]
+    B, S = embeds.shape[0], embeds.shape[1]
+    inputs = {"inputs_embeds": embeds}
+    if "attention_mask" in lm.input_names:
+        inputs["attention_mask"] = np.ones((B, S), dtype=np.int64)
+    if "position_ids" in lm.input_names:
+        pos = np.arange(S, dtype=np.int64)[None, :]
+        mt = getattr(lm.config, "model_type", "")
+        if mt in ("qwen3_5", "qwen3_5_moe") and pos.ndim != 3:
+            pos = np.repeat(np.expand_dims(pos, 0), 4, axis=0)
+        elif mt in ("qwen2_vl", "qwen2_5_vl", "qwen3_vl") and pos.ndim == 2:
+            pos = np.repeat(np.expand_dims(pos, 0), 3, axis=0)
+        elif mt == "qwen3_omni_moe" and pos.ndim == 2:
+            pos = np.repeat(np.expand_dims(pos, 0), 4, axis=0)
+        inputs["position_ids"] = pos
+    if "beam_idx" in lm.input_names:
+        inputs["beam_idx"] = np.arange(B, dtype=np.int64)
+    if "token_type_ids" in lm.input_names:
+        inputs["token_type_ids"] = np.zeros((B, S), dtype=np.int64)
+    req = lm.request
+    reset = getattr(req, "reset_state", None)
+    if callable(reset):
+        reset()
+    req.infer(inputs)
+    return torch.from_numpy(req.get_tensor("logits").data).clone()
+
+
 def e2e(model_dir: str | Path, *, log=None) -> dict:
     """End-to-end GenAI smoke on a text OR VLM dir (reuses genai_test.run_test)."""
     from ov_converter.genai_test import run_test
+    d = Path(model_dir)
+    if log:
+        log(f"e2e: running GenAI smoke test on {d.name}")
     return run_test(model_dir, prompt=_cfg.prompt, max_new_tokens=_cfg.max_new_tokens,
                     device=_cfg.device, log=log)
 
 
-def perplexity(model_dir: str | Path, *, log=None) -> dict:
-    """Causal-LM perplexity of a text-only OV dir over the eval corpus."""
+def perplexity(model_dir: str | Path, *, log=None, label: str = "model",
+               progress=None) -> dict:
+    """Causal-LM perplexity over the eval corpus.
+
+    Text-only dirs use openvino_model.xml. VLM dirs fall back to the standalone
+    openvino_language_model.xml decoder, embedded via openvino_text_embeddings_model.xml.
+    """
     d = Path(model_dir)
-    if (d / "openvino_vision_embeddings_model.xml").exists() or \
-            not (d / "openvino_model.xml").exists():
-        return {"ok": False, "reason": "perplexity requires a text-only model (openvino_model.xml)"}
+    ir_name = _resolve_language_ir(d)
+    if ir_name is None:
+        return {
+            "ok": False,
+            "reason": "perplexity requires a text-only model (openvino_model.xml) "
+                      "or a VLM language submodel (openvino_language_model.xml)",
+        }
     try:
         import torch
         import torch.nn.functional as F
         from optimum.intel.openvino import OVModelForCausalLM
         from transformers import AutoTokenizer
 
+        is_lm_submodel = ir_name == "openvino_language_model.xml"
         if log:
-            log(f"loading OVModelForCausalLM from {d.name}")
-        model = OVModelForCausalLM.from_pretrained(str(d), compile=True, trust_remote_code=True)
+            log(f"perplexity: loading {label} {d.name}")
+        model = OVModelForCausalLM.from_pretrained(
+            str(d), file_name=ir_name, compile=True, trust_remote_code=True
+        )
         tok = AutoTokenizer.from_pretrained(str(d))
+        emb_req = None
+        if is_lm_submodel:
+            import numpy as np
+            import openvino as ov
+
+            core = ov.Core()
+            if log:
+                log(f"perplexity: loading text embeddings submodel ({label})")
+            emb_req = core.compile_model(str(d / "openvino_text_embeddings_model.xml"), _cfg.device)
         if log:
-            log(f"model compiled, tokenizer ready ({d.name})")
+            log(f"perplexity: model compiled, tokenizer ready ({label})")
         lines = [ln for ln in corpus_lines() if len(ln) >= 20]
+        if log:
+            log(f"perplexity: processing {len(lines)} lines ({label})")
         total_nll = 0.0
         total_tokens = 0
         done = 0
@@ -130,17 +206,23 @@ def perplexity(model_dir: str | Path, *, log=None) -> dict:
                 ids = enc["input_ids"]
                 if ids.shape[1] < 2:
                     continue
-                out = model(**enc)
-                shift = out.logits[:, :-1, :].reshape(-1, out.logits.shape[-1])
+                if is_lm_submodel:
+                    logits = _vlm_lm_logits(model, emb_req, ids)
+                else:
+                    out = model(**enc)
+                    logits = out.logits
+                shift = logits[:, :-1, :].reshape(-1, logits.shape[-1])
                 labels = ids[:, 1:].reshape(-1)
-                valid = labels < out.logits.shape[-1]
-                labels = labels.clamp(max=out.logits.shape[-1] - 1)
+                valid = labels < logits.shape[-1]
+                labels = labels.clamp(max=logits.shape[-1] - 1)
                 nll = F.cross_entropy(shift, labels, reduction="none") * valid
                 total_nll += float(nll.sum())
                 total_tokens += int(valid.sum())
                 done += 1
+                if progress:
+                    progress(done / max(len(lines), 1))
                 if log and done % 50 == 0:
-                    log(f"perplexity progress: {done}/{len(lines)} lines")
+                    log(f"perplexity: processed {done}/{len(lines)} lines ({label})")
         del model
         gc.collect()
         if total_tokens == 0:
@@ -151,12 +233,14 @@ def perplexity(model_dir: str | Path, *, log=None) -> dict:
             "nll": round(total_nll, 3),
             "tokens": total_tokens,
             "lines": done,
+            "submodel": ir_name,
         }
     except Exception as e:  # noqa: BLE001
         return {"ok": False, "error": str(e)[:300]}
 
 
-def side_by_side(baseline: str | Path, candidate: str | Path, *, log=None) -> dict:
+def side_by_side(baseline: str | Path, candidate: str | Path, *, log=None,
+                 progress=None) -> dict:
     """Token-level First/Sum Divergent Tokens between baseline and candidate.
 
     Text-only dirs use openvino_genai.LLMPipeline (greedy). VLM dirs fall back
@@ -165,32 +249,60 @@ def side_by_side(baseline: str | Path, candidate: str | Path, *, log=None) -> di
     from transformers import AutoTokenizer
 
     d_b, d_c = Path(baseline), Path(candidate)
+    missing = [str(p) for p in (d_b, d_c) if not p.exists()]
+    if missing:
+        return {
+            "ok": False,
+            "reason": "side_by_side needs both model dirs; missing: " + ", ".join(missing),
+        }
     prompts = _FIXED_PROMPTS[:_cfg.num_prompts] or _FIXED_PROMPTS
+    n = len(prompts)
     is_vlm = (d_b / "openvino_vision_embeddings_model.xml").exists() or \
         (d_c / "openvino_vision_embeddings_model.xml").exists()
 
     if is_vlm:
         from ov_converter.genai_test import run_test
         if log:
-            log("VLM dirs detected -> falling back to genai_test outputs")
-        base_outs = [run_test(baseline, prompt=p, max_new_tokens=_cfg.max_new_tokens,
-                              device=_cfg.device)["output"] for p in prompts]
-        cand_outs = [run_test(candidate, prompt=p, max_new_tokens=_cfg.max_new_tokens,
-                              device=_cfg.device)["output"] for p in prompts]
+            log(f"side_by_side: VLM dirs detected -> genai_test outputs ({n} prompts)")
+        base_outs, cand_outs = [], []
+        for i, p in enumerate(prompts, 1):
+            if log:
+                log(f"side_by_side: generating prompt {i}/{n} (baseline)")
+            base_outs.append(run_test(baseline, prompt=p, max_new_tokens=_cfg.max_new_tokens,
+                                      device=_cfg.device)["output"])
+            if progress:
+                progress(i / (2 * n))
+        for i, p in enumerate(prompts, 1):
+            if log:
+                log(f"side_by_side: generating prompt {i}/{n} (candidate)")
+            cand_outs.append(run_test(candidate, prompt=p, max_new_tokens=_cfg.max_new_tokens,
+                                      device=_cfg.device)["output"])
+            if progress:
+                progress(0.5 + i / (2 * n))
     else:
         import openvino_genai as genai
         if log:
-            log(f"compiling baseline LLMPipeline ({_cfg.device}) ...")
+            log(f"side_by_side: compiling baseline LLMPipeline ({_cfg.device}) ...")
         pipe = genai.LLMPipeline(str(d_b), _cfg.device)
-        base_outs = [_clean(str(pipe.generate(p, max_new_tokens=_cfg.max_new_tokens, do_sample=False)))
-                     for p in prompts]
+        base_outs = []
+        for i, p in enumerate(prompts, 1):
+            if log:
+                log(f"side_by_side: generating prompt {i}/{n} (baseline)")
+            base_outs.append(_clean(str(pipe.generate(p, max_new_tokens=_cfg.max_new_tokens, do_sample=False))))
+            if progress:
+                progress(i / (2 * n))
         del pipe
         gc.collect()
         if log:
-            log(f"compiling candidate LLMPipeline ({_cfg.device}) ...")
+            log(f"side_by_side: compiling candidate LLMPipeline ({_cfg.device}) ...")
         pipe = genai.LLMPipeline(str(d_c), _cfg.device)
-        cand_outs = [_clean(str(pipe.generate(p, max_new_tokens=_cfg.max_new_tokens, do_sample=False)))
-                     for p in prompts]
+        cand_outs = []
+        for i, p in enumerate(prompts, 1):
+            if log:
+                log(f"side_by_side: generating prompt {i}/{n} (candidate)")
+            cand_outs.append(_clean(str(pipe.generate(p, max_new_tokens=_cfg.max_new_tokens, do_sample=False))))
+            if progress:
+                progress(0.5 + i / (2 * n))
         del pipe
         gc.collect()
 
@@ -201,15 +313,22 @@ def side_by_side(baseline: str | Path, candidate: str | Path, *, log=None) -> di
         bt = tok(bo, add_special_tokens=False)["input_ids"]
         ct = tok(co, add_special_tokens=False)["input_ids"]
         L = max(len(bt), 1)
-        n = min(len(bt), len(ct))
-        fdt = next((i for i in range(n) if bt[i] != ct[i]), n)
-        sdt = sum(1 for i in range(n) if bt[i] != ct[i]) + abs(len(bt) - len(ct))
+        nmin = min(len(bt), len(ct))
+        fdt = next((i for i in range(nmin) if bt[i] != ct[i]), nmin)
+        sdt = sum(1 for i in range(nmin) if bt[i] != ct[i]) + abs(len(bt) - len(ct))
         exact = 1 if bt == ct else 0
         fdt_n = round(fdt / L, 3)
         sdt_n = round(sdt / L, 3)
         fdt_vals.append(fdt_n)
         sdt_vals.append(sdt_n)
         exact_vals.append(exact)
+        if exact:
+            explain = "Identical output"
+        else:
+            explain = (
+                f"FDT {fdt_n} — first divergence at token {fdt_n * 100:.1f}% of reference; "
+                f"SDT {sdt_n} — ~{sdt_n * 100:.0f}% of tokens differ"
+            )
         rows.append({
             "prompt": p,
             "baseline": _clean(bo)[:_PROMPT_LIMIT],
@@ -217,6 +336,7 @@ def side_by_side(baseline: str | Path, candidate: str | Path, *, log=None) -> di
             "fdt": fdt_n,
             "sdt": sdt_n,
             "exact": exact,
+            "explain": explain,
         })
     nprompts = max(len(fdt_vals), 1)
     return {
@@ -225,6 +345,115 @@ def side_by_side(baseline: str | Path, candidate: str | Path, *, log=None) -> di
         "avg_sdt": round(sum(sdt_vals) / nprompts, 3),
         "exact_match_pct": round(sum(exact_vals) / nprompts * 100, 2),
     }
+
+
+def _decorate_e2e(res: dict, cand_name: str) -> dict:
+    res["label"] = "E2E GenAI smoke"
+    if res.get("ok"):
+        tp = res.get("tok_per_s")
+        res["status"] = "ok"
+        res["summary"] = f"E2E ok — {tp} tok/s"
+        res["details"] = (
+            f"End-to-end GenAI smoke test on {cand_name} "
+            f"({'VLMPipeline' if res.get('is_vlm') else 'LLMPipeline'} on {_cfg.device}, "
+            f"max_new_tokens {_cfg.max_new_tokens}).\n"
+            f"Generated {res.get('tokens')} tokens in {res.get('elapsed_s')} s -> {tp} tok/s.\n"
+            f"Prompt: {res.get('prompt')!r}\n"
+            f"Output (truncated): {res.get('output')!r}"
+        )
+    else:
+        res["status"] = "bad"
+        msg = res.get("error") or res.get("reason") or "see details"
+        res["summary"] = f"E2E failed — {msg}"
+        res["details"] = f"End-to-end GenAI smoke test on {cand_name} failed.\n{msg}"
+    return res
+
+
+def _decorate_perplexity(res: dict, bname: str, cname: str, corpus_info: dict) -> dict:
+    b, c = res.get("baseline", {}), res.get("candidate", {})
+    res["label"] = "Perplexity"
+    b_ok = isinstance(b, dict) and b.get("ok")
+    c_ok = isinstance(c, dict) and c.get("ok")
+    if b_ok and c_ok and b.get("ppl") is not None and c.get("ppl") is not None:
+        pb, pc = b["ppl"], c["ppl"]
+        delta = (pc - pb) / pb * 100 if pb else 0.0
+        if delta >= 50:
+            status, verdict = "bad", "major degradation"
+        elif delta >= 10:
+            status, verdict = "warn", "noticeable drop"
+        elif delta < 0:
+            status, verdict = "ok", "improvement (lower is better)"
+        else:
+            status, verdict = "ok", "stable"
+        res["status"] = status
+        res["summary"] = f"Perplexity {pb} → {pc} ({delta:+.0f}%) — {verdict}"
+        res["details"] = (
+            f"Perplexity of the causal-LM over the eval corpus (lower is better).\n"
+            f"Baseline {bname}: ppl {pb} over {b.get('lines')} lines / {b.get('tokens')} tokens "
+            f"({b.get('submodel')})\n"
+            f"Candidate {cname}: ppl {pc} over {c.get('lines')} lines / {c.get('tokens')} tokens "
+            f"({c.get('submodel')})\n"
+            f"Delta {delta:+.1f}% — {verdict}. Thresholds: green < +10%, amber < +50%, red >= +50%.\n"
+            f"Corpus: {corpus_info['file']} ({corpus_info['lines']} lines)"
+        )
+    else:
+        res["status"] = "bad"
+        b_msg = (b.get("reason") or b.get("error") or "failed") if isinstance(b, dict) else "failed"
+        c_msg = (c.get("reason") or c.get("error") or "failed") if isinstance(c, dict) else "failed"
+        if b_ok or c_ok:
+            side = "baseline" if not b_ok else "candidate"
+            res["summary"] = f"Perplexity unavailable — {side} failed ({c_msg if not b_ok else b_msg})"
+        else:
+            res["summary"] = "Perplexity unavailable — both sides failed"
+        res["details"] = (
+            f"Perplexity of the causal-LM over the eval corpus (lower is better).\n"
+            f"Baseline {bname}: {'ppl ' + str(b.get('ppl')) if b_ok else 'FAILED — ' + b_msg}\n"
+            f"Candidate {cname}: {'ppl ' + str(c.get('ppl')) if c_ok else 'FAILED — ' + c_msg}\n"
+            f"Corpus: {corpus_info['file']} ({corpus_info['lines']} lines)"
+        )
+    return res
+
+
+def _decorate_sbs(res: dict, bname: str, cname: str) -> dict:
+    res["label"] = "Side-by-side generation"
+    if not res.get("ok"):
+        res["status"] = "na"
+        msg = res.get("reason") or res.get("error") or "see details"
+        res["summary"] = f"Side-by-side skipped — {msg}"
+        res["details"] = f"Token-level comparison of {bname} vs {cname} could not be run.\n{msg}"
+        return res
+    ex = res.get("exact_match_pct", 0.0)
+    n = len(res.get("prompts", []))
+    if ex >= 90:
+        status = "ok"
+    elif ex >= 50:
+        status = "warn"
+    else:
+        status = "bad"
+    res["status"] = status
+    band = "green" if status == "ok" else ("amber" if status == "warn" else "red")
+    res["summary"] = (
+        f"Side-by-side — exact match {ex}% · avg FDT {res.get('avg_fdt')} · avg SDT {res.get('avg_sdt')}"
+    )
+    res["details"] = (
+        f"Token-level comparison of greedy generation across {n} prompts ({bname} vs {cname}).\n"
+        f"Exact match: {ex}% — {band}.\n"
+        f"Avg FDT (first divergent token, fraction of reference): {res.get('avg_fdt')}\n"
+        f"Avg SDT (sum of divergent tokens, fraction of reference): {res.get('avg_sdt')}\n"
+        f"Per-prompt details are in prompts[].explain."
+    )
+    return res
+
+
+def _decorate_test(name: str, res: dict, *, baseline_name: str,
+                   candidate_name: str, corpus_info: dict) -> dict:
+    if name == "e2e":
+        return _decorate_e2e(res, candidate_name)
+    if name == "perplexity":
+        return _decorate_perplexity(res, baseline_name, candidate_name, corpus_info)
+    if name == "side_by_side":
+        return _decorate_sbs(res, baseline_name, candidate_name)
+    return res
 
 
 def _done_detail(name: str, res: dict) -> str:
@@ -264,47 +493,63 @@ def main() -> int:
             rc = 1
 
     emit.start("corpus")
+    corpus_file = str(Path(_cfg.corpus) if _cfg.corpus else DEFAULT_CORPUS)
+    corpus_info = {"file": corpus_file, "lines": 0}
     try:
         lines = corpus_lines()
-        result["corpus"] = {
-            "file": str(Path(_cfg.corpus) if _cfg.corpus else DEFAULT_CORPUS),
-            "lines": len(lines),
-        }
+        corpus_info["lines"] = len(lines)
+        result["corpus"] = {"file": corpus_file, "lines": len(lines)}
         emit.done("corpus", f"{len(lines)} lines")
     except Exception as e:  # noqa: BLE001
         result["corpus"] = {"ok": False, "error": str(e)[:300]}
         emit.fail("corpus", str(e)[:300])
         rc = 1
 
-    for name in _cfg.tests:
+    n_tests = len(_cfg.tests)
+
+    def _report(idx: int, portion: float) -> None:
+        emit.progress(int(round((idx + portion) / max(n_tests, 1) * 100)))
+
+    baseline_name = Path(_cfg.baseline).name if _cfg.baseline else ""
+    candidate_name = Path(_cfg.candidate).name if _cfg.candidate else ""
+
+    for i, name in enumerate(_cfg.tests):
         emit.start(name)
+        res: dict | None = None
         try:
             if name == "e2e":
                 res = e2e(_cfg.candidate, log=log)
+                _report(i, 1.0)
             elif name == "perplexity":
-                res = {
-                    "baseline": perplexity(_cfg.baseline, log=log),
-                    "candidate": perplexity(_cfg.candidate, log=log),
-                }
-                res["ok"] = res["baseline"].get("ok") and res["candidate"].get("ok")
+                b = perplexity(_cfg.baseline, log=log, label="baseline",
+                               progress=lambda p: _report(i, p * 0.5))
+                c = perplexity(_cfg.candidate, log=log, label="candidate",
+                               progress=lambda p: _report(i, 0.5 + p * 0.5))
+                res = {"baseline": b, "candidate": c}
+                res["ok"] = b.get("ok") and c.get("ok")
+                _report(i, 1.0)
             elif name == "side_by_side":
-                res = side_by_side(_cfg.baseline, _cfg.candidate, log=log)
+                res = side_by_side(_cfg.baseline, _cfg.candidate, log=log,
+                                   progress=lambda p: _report(i, p))
                 res["ok"] = True
             else:
                 raise ValueError(f"unknown test: {name}")
-            result["tests"][name] = res
-            if res.get("ok"):
-                emit.done(name, _done_detail(name, res))
-            else:
-                msg = res.get("reason") or res.get("error") or "failed"
-                for side in ("baseline", "candidate"):
-                    sub = res.get(side)
-                    if isinstance(sub, dict) and not sub.get("ok"):
-                        msg = sub.get("reason") or sub.get("error") or msg
-                emit.fail(name, str(msg)[:200])
         except Exception as e:  # noqa: BLE001
-            result["tests"][name] = {"ok": False, "error": str(e)[:300]}
+            res = {"ok": False, "error": str(e)[:300]}
             emit.fail(name, str(e)[:200])
+
+        res = _decorate_test(
+            name, res,
+            baseline_name=baseline_name,
+            candidate_name=candidate_name,
+            corpus_info=corpus_info,
+        )
+        result["tests"][name] = res
+        if res.get("ok"):
+            emit.done(name, _done_detail(name, res))
+        else:
+            msg = res.get("summary") or res.get("reason") or res.get("error") or "failed"
+            emit.fail(name, str(msg)[:200])
 
     emit.done("testing", f"rc={rc}")
     emit.emit("META", "done", json.dumps(result, ensure_ascii=False, default=str))
