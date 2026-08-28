@@ -1725,13 +1725,13 @@ async function runConvert() {
 async function runTest() {
   const baseline = $("ts-baseline").value;
   const candidate = $("ts-candidate").value;
-  const errors = [];
-  if (!baseline) errors.push("Pick a baseline model.");
-  if (!candidate) errors.push("Pick a candidate model.");
   const tests = [];
   if ($("ts-e2e").checked) tests.push("e2e");
   if ($("ts-ppl").checked) tests.push("perplexity");
   if ($("ts-sideby").checked) tests.push("side_by_side");
+  const errors = [];
+  if (!candidate) errors.push("Pick a candidate model.");
+  if (!baseline && (tests.indexOf("perplexity") !== -1 || tests.indexOf("side_by_side") !== -1)) errors.push("Pick a baseline model (required for perplexity and side-by-side).");
   if (!tests.length) errors.push("Select at least one test (e2e / perplexity / side-by-side).");
   const box = $("ts-errors");
   if (box) { box.innerHTML = ""; errors.forEach((e) => box.appendChild(el("div", null, "⚠ " + e))); }
@@ -1793,9 +1793,11 @@ function renderTestResults(tests) {
   }
   html += "</tbody></table>";
   for (const t of list) {
-    if (Array.isArray(t.details) && t.details.length) {
+    const d = t.details;
+    const text = d == null ? "" : (Array.isArray(d) ? d.join("\n") : String(d));
+    if (text.length) {
       const label = t.label || TEST_LABELS[t.id || t.name] || t.id || t.name || "test";
-      html += "<div class=\"help\" style=\"white-space:pre-wrap\"><b>" + esc(label) + ":</b> " + esc(t.details.join("\n")) + "</div>";
+      html += "<div class=\"help\" style=\"white-space:pre-line\"><b>" + esc(label) + ":</b> " + esc(text) + "</div>";
     }
   }
   const sbs = list.find((t) => (t.id === "side_by_side" || t.kind === "side_by_side" || t.name === "side_by_side") && Array.isArray(t.prompts) && t.prompts.length);
@@ -1808,9 +1810,11 @@ function renderTestResults(tests) {
         "<td class=\"mono\">" + esc(p.fdt) + "</td>" +
         "<td class=\"mono\">" + esc(p.sdt) + "</td>" +
         "<td class=\"mono\">" + esc(p.exact) + "</td></tr>";
+      if (p.explain != null && String(p.explain).length) {
+        html += "<tr><td colspan=\"6\" class=\"help\" style=\"white-space:pre-line\">" + esc(String(p.explain)) + "</td></tr>";
+      }
     }
     html += "</tbody></table>";
-    if (sbs.explain) html += "<div class=\"help\">" + esc(sbs.explain) + "</div>";
   }
   box.className = "info show ok";
   box.innerHTML = html;

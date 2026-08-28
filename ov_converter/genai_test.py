@@ -40,10 +40,10 @@ def run_test(model_dir: str | Path, *, prompt: str | None = None,
         import openvino as ov
         pipe = genai.VLMPipeline(str(d), device)
         images = [ov.Tensor(_sample_image())]
-        result = pipe.generate(text_prompt, images=images, max_new_tokens=max_new_tokens)
+        result = pipe.generate(text_prompt, images=images, max_new_tokens=max_new_tokens, do_sample=False)
     else:
         pipe = genai.LLMPipeline(str(d), device)
-        result = pipe.generate(text_prompt, max_new_tokens=max_new_tokens)
+        result = pipe.generate(text_prompt, max_new_tokens=max_new_tokens, do_sample=False)
     dt = time.time() - t0
     tok = max(result.get_num_generated_tokens(), 1) if hasattr(result, "get_num_generated_tokens") else max_new_tokens
     out = str(result).encode("utf-8", errors="replace").decode("utf-8")

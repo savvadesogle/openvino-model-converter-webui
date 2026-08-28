@@ -104,6 +104,9 @@ def corpus_lines() -> list[str]:
 
 
 def _resolve_language_ir(d: Path) -> str | None:
+    is_vlm = (d / "openvino_vision_embeddings_model.xml").exists()
+    if is_vlm and (d / "openvino_language_model.xml").exists():
+        return "openvino_language_model.xml"
     for name in ("openvino_model.xml", "openvino_language_model.xml"):
         if (d / name).exists():
             return name
@@ -234,6 +237,7 @@ def perplexity(model_dir: str | Path, *, log=None, label: str = "model",
             "tokens": total_tokens,
             "lines": done,
             "submodel": ir_name,
+            "vocab_size": len(tok),
         }
     except Exception as e:  # noqa: BLE001
         return {"ok": False, "error": str(e)[:300]}
@@ -254,6 +258,15 @@ def side_by_side(baseline: str | Path, candidate: str | Path, *, log=None,
         return {
             "ok": False,
             "reason": "side_by_side needs both model dirs; missing: " + ", ".join(missing),
+        }
+    tok_b = AutoTokenizer.from_pretrained(str(d_b))
+    tok_c = AutoTokenizer.from_pretrained(str(d_c))
+    if len(tok_b) != len(tok_c):
+        return {
+            "ok": False,
+            "status": "na",
+            "reason": (f"baseline and candidate tokenizer vocab sizes differ "
+                       f"({len(tok_b)} vs {len(tok_c)})"),
         }
     prompts = _FIXED_PROMPTS[:_cfg.num_prompts] or _FIXED_PROMPTS
     n = len(prompts)
@@ -372,6 +385,8 @@ def _decorate_e2e(res: dict, cand_name: str) -> dict:
 def _decorate_perplexity(res: dict, bname: str, cname: str, corpus_info: dict) -> dict:
     b, c = res.get("baseline", {}), res.get("candidate", {})
     res["label"] = "Perplexity"
+    if res.get("status") == "na":
+        return res
     b_ok = isinstance(b, dict) and b.get("ok")
     c_ok = isinstance(c, dict) and c.get("ok")
     if b_ok and c_ok and b.get("ppl") is not None and c.get("ppl") is not None:
@@ -402,7 +417,7 @@ def _decorate_perplexity(res: dict, bname: str, cname: str, corpus_info: dict) -
         c_msg = (c.get("reason") or c.get("error") or "failed") if isinstance(c, dict) else "failed"
         if b_ok or c_ok:
             side = "baseline" if not b_ok else "candidate"
-            res["summary"] = f"Perplexity unavailable — {side} failed ({c_msg if not b_ok else b_msg})"
+            res["summary"] = f"Perplexity unavailable — {side} failed ({b_msg if not b_ok else c_msg})"
         else:
             res["summary"] = "Perplexity unavailable — both sides failed"
         res["details"] = (
@@ -467,6 +482,16 @@ def _done_detail(name: str, res: dict) -> str:
     return "ok"
 
 
+def _comparable_perplexity(b: dict, c: dict) -> str | None:
+    if b.get("submodel") != c.get("submodel"):
+        return (f"baseline and candidate are not the same architecture/tokenizer "
+                f"(submodel: {b.get('submodel')} vs {c.get('submodel')})")
+    if b.get("vocab_size") != c.get("vocab_size"):
+        return (f"baseline and candidate are not the same architecture/tokenizer "
+                f"(vocab size: {b.get('vocab_size')} vs {c.get('vocab_size')})")
+    return None
+
+
 def main() -> int:
     if len(sys.argv) < 2:
         print("usage: python -m ov_converter.eval <config.json>", file=sys.stderr)
@@ -526,12 +551,27 @@ def main() -> int:
                 c = perplexity(_cfg.candidate, log=log, label="candidate",
                                progress=lambda p: _report(i, 0.5 + p * 0.5))
                 res = {"baseline": b, "candidate": c}
-                res["ok"] = b.get("ok") and c.get("ok")
+                if b.get("ok") and c.get("ok"):
+                    reason = _comparable_perplexity(b, c)
+                    if reason:
+                        res.update({
+                            "ok": False,
+                            "status": "na",
+                            "label": "Perplexity",
+                            "reason": reason,
+                            "summary": f"Perplexity skipped — {reason}",
+                            "details": (f"Perplexity of the causal-LM over the eval corpus "
+                                        f"(lower is better).\n{reason}"),
+                        })
+                    else:
+                        res["ok"] = True
+                else:
+                    res["ok"] = False
                 _report(i, 1.0)
             elif name == "side_by_side":
                 res = side_by_side(_cfg.baseline, _cfg.candidate, log=log,
                                    progress=lambda p: _report(i, p))
-                res["ok"] = True
+                res.setdefault("ok", True)
             else:
                 raise ValueError(f"unknown test: {name}")
         except Exception as e:  # noqa: BLE001
