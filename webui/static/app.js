@@ -10,6 +10,7 @@ const state = {
   taskActive: false, taskKind: null, dlFiles: null, dlSelected: null, dlLocalComplete: null, dlResources: null,
   tsInfo: null, tsBaseline: null, tsCandidate: null,
   validatedSub: null, dlSubDirty: false, validating: false, drives: [], hfEnvState: null,
+  streamResumed: false,
 };
 let activeProgressId = null;
 let dlLocalDebounce = null;
@@ -1850,6 +1851,38 @@ const STAGE_FRIENDLY_LABEL = {
 };
 function bindTaskStream() {
   pollStatus();
+  resumeTaskStream().catch(() => {});
+}
+async function resumeTaskStream() {
+  if (state.streamResumed) return;
+  state.streamResumed = true;
+  let s;
+  try {
+    s = await api("/api/task/status");
+  } catch (e) { return; }
+  if (!s.task) return;
+  const kind = s.task.kind;
+  state.taskKind = kind;
+  if (s.task.id) state.currentTask = s.task.id;
+  $("task-status").textContent = s.busy ? "running" : (s.done ? "finished" : "idle");
+  $("task-status").className = "chip " + (s.busy ? "busy" : s.done ? "done" : "");
+  if (kind === "test") renderStages("test");
+  else renderStages(kind);
+  $("task-panel").classList.remove("collapsed");
+  const es = new EventSource("/api/task/stream" + (s.task.id ? "?task_id=" + s.task.id : ""));
+  es.onmessage = (e) => {
+    try { const d = JSON.parse(e.data); onTaskLine(d.line); } catch (err) { appendLog(e.data); }
+  };
+  es.addEventListener("done", (e) => {
+    es.close();
+    try {
+      const d = JSON.parse(e.data);
+      $("task-status").textContent = (d.returncode === 0 ? (state.taskKind ? state.taskKind + " completed" : "completed") : (state.taskKind ? state.taskKind + " FAILED" : "FAILED"));
+      $("task-status").className = "chip " + (d.returncode === 0 ? "done" : "failed");
+    } catch (err) {}
+    resetTaskUi();
+  });
+  es.onerror = () => { es.close(); };
 }
 function renderStages(kind) {
   const box = $("stages");
