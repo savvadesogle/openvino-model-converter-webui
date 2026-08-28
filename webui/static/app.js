@@ -1802,19 +1802,19 @@ function renderTestResults(tests) {
   }
   const sbs = list.find((t) => (t.id === "side_by_side" || t.kind === "side_by_side" || t.name === "side_by_side") && Array.isArray(t.prompts) && t.prompts.length);
   if (sbs) {
-    html += "<table class=\"mini-table\" style=\"margin-top:12px\"><thead><tr><th>Prompt</th><th>Baseline</th><th>Candidate</th><th>FDT</th><th>SDT</th><th>Exact</th></tr></thead><tbody>";
     for (const p of sbs.prompts) {
-      html += "<tr><td>" + esc(p.prompt) + "</td>" +
-        "<td class=\"code\" title=\"" + esc(p.baseline) + "\">" + esc(truncateText(p.baseline, 120)) + "</td>" +
-        "<td class=\"code\" title=\"" + esc(p.candidate) + "\">" + esc(truncateText(p.candidate, 120)) + "</td>" +
-        "<td class=\"mono\">" + esc(p.fdt) + "</td>" +
-        "<td class=\"mono\">" + esc(p.sdt) + "</td>" +
-        "<td class=\"mono\">" + esc(p.exact) + "</td></tr>";
+      html += "<div class=\"sbs-block\">" +
+        "<div class=\"sbs-prompt\">Q: <b>" + esc(p.prompt) + "</b>" +
+        " <span class=\"sbs-metrics\">FDT " + esc(p.fdt) + " · SDT " + esc(p.sdt) + " · exact " + esc(p.exact) + "%</span></div>" +
+        "<div class=\"sbs-cols\">" +
+        "<div class=\"sbs-col\"><div class=\"sbs-colhead\">Baseline</div><div class=\"code sbs-out\">" + esc(p.baseline) + "</div></div>" +
+        "<div class=\"sbs-col\"><div class=\"sbs-colhead\">Candidate</div><div class=\"code sbs-out\">" + esc(p.candidate) + "</div></div>" +
+        "</div>";
       if (p.explain != null && String(p.explain).length) {
-        html += "<tr><td colspan=\"6\" class=\"help\" style=\"white-space:pre-line\">" + esc(String(p.explain)) + "</td></tr>";
+        html += "<div class=\"sbs-explain help\">" + esc(String(p.explain)) + "</div>";
       }
+      html += "</div>";
     }
-    html += "</tbody></table>";
   }
   box.className = "info show ok";
   box.innerHTML = html;

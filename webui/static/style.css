@@ -128,6 +128,14 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 #ts-results { overflow-x:auto; max-width:100%; }
 .mini-table td.code { max-width:260px; white-space:pre-wrap; }
 .mini-table .code { display:block; }
+.sbs-block { border:1px solid var(--line); border-radius:0; padding:8px 10px; margin-top:10px; }
+.sbs-prompt { font-size:12.5px; margin-bottom:6px; }
+.sbs-metrics { color:var(--muted); font-size:11.5px; margin-left:6px; }
+.sbs-cols { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+@media (max-width: 720px) { .sbs-cols { grid-template-columns:1fr; } }
+.sbs-col { min-width:0; }
+.sbs-colhead { font-size:11.5px; font-weight:700; color:var(--muted); margin-bottom:2px; }
+.sbs-out { white-space:pre-wrap; overflow-wrap:anywhere; word-break:break-word; font-size:12px; }
 
 .files-head { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; }
 .files-head h3 { margin: 0; font-size: 13px; font-weight: 700; }
