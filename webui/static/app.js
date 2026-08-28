@@ -8,6 +8,7 @@ const state = {
   selfTest: null, selfTestBusy: false, selfTestLast: null, prevCompressMode: null,
   cvTfreq: null, tfBusy: false,
   taskActive: false, taskKind: null, dlFiles: null, dlSelected: null, dlLocalComplete: null, dlResources: null,
+  tsInfo: null, tsBaseline: null, tsCandidate: null,
   validatedSub: null, dlSubDirty: false, validating: false, drives: [], hfEnvState: null,
 };
 let activeProgressId = null;
@@ -106,6 +107,7 @@ async function loadModels() {
   state.sources = d.sources;
   state.converted = d.converted;
   renderModelSelect();
+  renderTestModels();
 }
 function composeHfBase() {
   const drv = $("hf-drive").value.trim().replace(/[\\/]+$/, "");
@@ -391,6 +393,11 @@ function bindEvents() {
   $("task-cancel").disabled = true;
   $("dl-cancel").addEventListener("click", cancelTask);
   $("cv-cancel").addEventListener("click", cancelTask);
+  $("ts-refresh").addEventListener("click", loadModels);
+  $("ts-baseline").addEventListener("change", tsMeta);
+  $("ts-candidate").addEventListener("change", tsMeta);
+  $("ts-run").addEventListener("click", runTest);
+  $("ts-cancel").addEventListener("click", cancelTask);
   $("task-clear").addEventListener("click", () => { $("task-log").innerHTML = ""; $("stages").innerHTML = ""; });
   $("task-collapse").addEventListener("click", () => {
     $("task-panel").classList.toggle("collapsed");
@@ -1267,6 +1274,43 @@ function renderModelSelect() {
   if (prev && [...sel.options].some((o) => o.value === prev)) sel.value = prev;
   onModelChange();
 }
+function renderTestModels() {
+  const selA = $("ts-baseline");
+  const selB = $("ts-candidate");
+  if (!selA || !selB) return;
+  const prevA = selA.value;
+  const prevB = selB.value;
+  const fill = (sel, prev) => {
+    sel.innerHTML = "";
+    for (const c of state.converted) {
+      const o = el("option", null, `${c.name} (${c.size_gb} GB${c.mode ? ", " + c.mode : ""}${c.is_vlm ? ", VLM" : ""})`);
+      o.value = c.path;
+      sel.appendChild(o);
+    }
+    if (prev && [...sel.options].some((o) => o.value === prev)) sel.value = prev;
+  };
+  fill(selA, prevA);
+  fill(selB, prevB);
+  const runBtn = $("ts-run");
+  if (runBtn) runBtn.disabled = !!state.taskActive;
+  tsMeta();
+}
+function tsBaseOf(name) {
+  return String(name || "").replace(/-(?:fp16|int2|int3|int4|int8|nf4|mxfp4|mxfp8|fp8e4m3|cb4|int2-mix|int3-mix)?-ov$/i, "");
+}
+function tsMeta() {
+  const a = $("ts-baseline");
+  const b = $("ts-candidate");
+  if (!a || !b) return;
+  const ra = state.converted.find((c) => c.path === a.value);
+  const rb = state.converted.find((c) => c.path === b.value);
+  if (!ra || !rb) { setInfo("ts-meta", ""); state.tsInfo = null; return; }
+  const ba = tsBaseOf(ra.name);
+  const bb = tsBaseOf(rb.name);
+  state.tsInfo = { baseline: ra, candidate: rb };
+  if (ba && ba === bb) setInfo("ts-meta", "Baseline and candidate share base " + ba, "ok");
+  else setInfo("ts-meta", "Warning: different base models", "bad");
+}
 function renderCvTfreq() {
   const box = $("cv-tfreq");
   if (!box) return;
@@ -1678,13 +1722,44 @@ async function runConvert() {
   };
   await startTask("convert", cfg, "/api/convert");
 }
+async function runTest() {
+  const baseline = $("ts-baseline").value;
+  const candidate = $("ts-candidate").value;
+  const errors = [];
+  if (!baseline) errors.push("Pick a baseline model.");
+  if (!candidate) errors.push("Pick a candidate model.");
+  const tests = [];
+  if ($("ts-e2e").checked) tests.push("e2e");
+  if ($("ts-ppl").checked) tests.push("perplexity");
+  if ($("ts-sideby").checked) tests.push("side_by_side");
+  if (!tests.length) errors.push("Select at least one test (e2e / perplexity / side-by-side).");
+  const box = $("ts-errors");
+  if (box) { box.innerHTML = ""; errors.forEach((e) => box.appendChild(el("div", null, "⚠ " + e))); }
+  if (errors.length) return;
+  const cfg = {
+    baseline,
+    candidate,
+    tests,
+    prompt: null,
+    max_new_tokens: Number($("ts-maxtokens").value) || 64,
+    num_prompts: Number($("ts-numprompts").value) || 8,
+    corpus: $("ts-corpus").value.trim() || null,
+    device: (document.querySelector('input[name="ts-device"]:checked') || { value: "CPU" }).value,
+  };
+  await startTask("test", cfg, "/api/test");
+}
 
 /* ---------------------------------------------------------------- Task streaming */
 const STAGES = ["validate", "download", "tfreq", "export", "compress", "package", "tokenizer", "genai_test"];
+const STAGES_BY_KIND = {
+  convert: STAGES,
+  test: ["testing", "e2e", "perplexity", "side_by_side"],
+};
 const STAGE_DONE_LABEL = {
   validate: "validated", download: "downloaded", tfreq: "transformers ok",
   export: "exported",
-  compress: "compressed", package: "packaged", tokenizer: "tokenizer ok", genai_test: "genai test ok"
+  compress: "compressed", package: "packaged", tokenizer: "tokenizer ok", genai_test: "genai test ok",
+  testing: "testing done", e2e: "e2e done", perplexity: "perplexity done", side_by_side: "side-by-side done"
 };
 function bindTaskStream() {
   pollStatus();
@@ -1692,7 +1767,7 @@ function bindTaskStream() {
 function renderStages(kind) {
   const box = $("stages");
   box.innerHTML = "";
-  const list = STAGES;
+  const list = STAGES_BY_KIND[kind] || STAGES;
   for (const s of list) {
     const n = el("div", "stage", "");
     n.dataset.stage = s;
@@ -1742,13 +1817,16 @@ function setTaskBusy(kind) {
   state.taskKind = kind;
   $("task-cancel").disabled = false;
   const isDl = kind === "download";
+  const isTest = kind === "test";
   $("dl-spinner").hidden = !isDl;
-  $("cv-spinner").hidden = isDl;
+  $("cv-spinner").hidden = isDl || isTest;
   $("dl-cancel").hidden = !isDl;
-  $("cv-cancel").hidden = isDl;
-  ["dl-run", "cv-run"].forEach((b) => { const el = $(b); el.disabled = true; el.classList.add("working"); });
-  activeProgressId = isDl ? "dl-progress" : "cv-progress";
-  ["dl-progress", "cv-progress"].forEach((id) => {
+  $("cv-cancel").hidden = isDl || isTest;
+  ["dl-run", "cv-run", "ts-run"].forEach((b) => { const el = $(b); el.disabled = true; el.classList.add("working"); });
+  $("ts-spinner").hidden = !isTest;
+  $("ts-cancel").hidden = !isTest;
+  activeProgressId = isDl ? "dl-progress" : isTest ? "ts-progress" : "cv-progress";
+  ["dl-progress", "cv-progress", "ts-progress"].forEach((id) => {
     const bar = $(id);
     bar.querySelector(".fill").style.width = "0%";
     bar.classList.toggle("indeterminate", id === activeProgressId);
@@ -1802,8 +1880,10 @@ function resetTaskUi() {
   $("cv-spinner").hidden = true;
   $("dl-cancel").hidden = true;
   $("cv-cancel").hidden = true;
-  ["dl-run", "cv-run"].forEach((b) => { const el = $(b); el.disabled = false; el.classList.remove("working"); });
-  ["dl-progress", "cv-progress"].forEach((id) => {
+  $("ts-spinner").hidden = true;
+  $("ts-cancel").hidden = true;
+  ["dl-run", "cv-run", "ts-run"].forEach((b) => { const el = $(b); el.disabled = false; el.classList.remove("working"); });
+  ["dl-progress", "cv-progress", "ts-progress"].forEach((id) => {
     const bar = $(id);
     bar.classList.remove("indeterminate");
     bar.querySelector(".fill").style.width = "0%";
@@ -1832,7 +1912,10 @@ function onTaskLine(line) {
     } else if (ev.ev === "META") {
       try {
         const r = JSON.parse(ev.payload);
-        if (r.genai_test) {
+        if (r.tests) {
+          setInfo("ts-results", "Test results:\n" + JSON.stringify(r.tests, null, 1), "ok");
+          appendLog("\n— test results —\n" + JSON.stringify(r.tests, null, 1));
+        } else if (r.genai_test) {
           appendLog("\n— result —\noutput: " + (r.output_dir || "?") + "\n" + JSON.stringify(r.genai_test, null, 1));
         } else {
           appendLog("\n— result —\noutput: " + (r.output_dir || "download complete"));
@@ -1851,15 +1934,22 @@ async function pollStatus() {
       $("task-status").textContent = s.busy ? "running" : (s.done ? "finished" : "idle");
       $("task-status").className = "chip " + (s.busy ? "busy" : s.done ? "done" : "");
       const isDl = s.task.kind === "download";
+      const isTest = s.task.kind === "test";
       $("dl-spinner").hidden = !(s.busy && isDl);
       $("cv-spinner").hidden = !(s.busy && !isDl);
       $("dl-cancel").hidden = !(s.busy && isDl);
       $("cv-cancel").hidden = !(s.busy && !isDl);
+      $("ts-spinner").hidden = !(s.busy && isTest);
+      $("ts-cancel").hidden = !(s.busy && isTest);
+      $("ts-run").disabled = !!s.busy;
     } else {
       $("dl-spinner").hidden = true;
       $("cv-spinner").hidden = true;
       $("dl-cancel").hidden = true;
       $("cv-cancel").hidden = true;
+      $("ts-spinner").hidden = true;
+      $("ts-cancel").hidden = true;
+      $("ts-run").disabled = false;
     }
   } catch (e) {}
   setTimeout(pollStatus, 3000);

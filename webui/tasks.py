@@ -13,6 +13,12 @@ import ov_converter.settings as S
 
 PROJECT_DIR = S.PROJECT_DIR
 
+_TASK_MODULES = {
+    "download": "ov_converter.pipeline",
+    "convert": "ov_converter.pipeline",
+    "test": "ov_converter.eval",
+}
+
 
 class Task:
     def __init__(self, kind: str, config: dict, task_id: str | None = None):
@@ -63,7 +69,7 @@ class Task:
             env[S.HF_HUB_CACHE_ENV] = str(self.config["hf_hub_cache"])
         if self.config.get("token"):
             env["HF_TOKEN"] = self.config["token"]
-        cmd = [S.resolve_python(), "-m", "ov_converter.pipeline", str(cfg_path)]
+        cmd = [S.resolve_python(), "-m", _TASK_MODULES.get(self.kind, "ov_converter.pipeline"), str(cfg_path)]
         self._proc = subprocess.Popen(
             cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             text=True, encoding="utf-8", errors="replace",

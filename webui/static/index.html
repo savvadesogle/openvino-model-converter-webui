@@ -19,6 +19,7 @@
 <nav class="tabs">
   <button class="tab active" data-panel="download">Download</button>
   <button class="tab" data-panel="convert">Convert</button>
+  <button class="tab" data-panel="testing">Testing</button>
 </nav>
 
 <main>
@@ -205,6 +206,52 @@ print(format_result(res))</pre>
       <div class="help">This project pins exact library versions in requirements.txt. &ldquo;Install required transformers&rdquo; (or auto-install) temporarily swaps the shared Python env to a different transformers version needed by a specific model. Click &ldquo;Restore pinned versions&rdquo; to switch the env back to the pinned requirements.txt versions — use it after a manual install, or to clean up a swap that didn't finish.</div>
     </div>
     <div class="row"><button id="cv-run" class="primary" disabled>Convert</button><span class="spinner" id="cv-spinner" hidden></span><div class="progress" id="cv-progress"><div class="fill"></div></div><button id="cv-cancel" class="danger" hidden>Cancel</button></div>
+  </div>
+
+</section>
+
+<!-- ============================================================ TESTING -->
+<section id="panel-testing" class="panel">
+
+  <div class="card">
+    <h2>Models</h2>
+    <p class="desc">Compare a dense fp16 OpenVINO export against a compressed one (both on disk under savvadesogle).</p>
+    <div class="row">
+      <label>Baseline (dense fp16-ov) <select id="ts-baseline" autocomplete="off"></select></label>
+      <label>Candidate (compressed) <select id="ts-candidate" autocomplete="off"></select></label>
+      <button id="ts-refresh" class="secondary">Rescan</button>
+    </div>
+    <div id="ts-meta" class="info"></div>
+  </div>
+
+  <div class="card">
+    <h2>Tests</h2>
+    <p class="desc">Metrics after conversion/compression. Perplexity and side-by-side need a text-only model (openvino_model.xml); VLMs get the end-to-end smoke test.</p>
+    <label class="check"><input id="ts-e2e" type="checkbox" checked> End-to-end GenAI smoke (tokens/s + sample output)</label>
+    <label class="check"><input id="ts-ppl" type="checkbox" checked> Perplexity on bundled corpus (text-only)</label>
+    <label class="check"><input id="ts-sideby" type="checkbox" checked> Side-by-side generation (FDT/SDT token agreement)</label>
+  </div>
+
+  <div class="card">
+    <h2>Options</h2>
+    <div class="row">
+      <label class="check"><input type="radio" name="ts-device" id="ts-device-cpu" value="CPU" checked> CPU</label>
+      <label class="check"><input type="radio" name="ts-device" id="ts-device-gpu" value="GPU"> GPU</label>
+      <span class="help">GPU is faster but int2 (u2) is not supported on GPU in OpenVINO 2026.4 — use CPU for int2.</span>
+    </div>
+    <div class="row">
+      <label>Max new tokens <input id="ts-maxtokens" type="number" value="64" min="1" step="1"></label>
+      <label>Prompts for side-by-side <input id="ts-numprompts" type="number" value="8" min="1" step="1"></label>
+    </div>
+    <label>Custom corpus (.txt, optional) <input id="ts-corpus" placeholder="leave empty to use bundled sample"></label>
+    <span class="help">The corpus is used for perplexity (plain text lines).</span>
+  </div>
+
+  <div class="card">
+    <h2>Run</h2>
+    <div id="ts-errors" class="errors"></div>
+    <div id="ts-results" class="info"></div>
+    <div class="row"><button id="ts-run" class="primary" disabled>Run tests</button><span class="spinner" id="ts-spinner" hidden></span><div class="progress" id="ts-progress"><div class="fill"></div></div><button id="ts-cancel" class="danger" hidden>Cancel</button></div>
   </div>
 
 </section>

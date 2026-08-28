@@ -70,6 +70,17 @@ class ConvertIn(BaseModel):
     hf_hub_cache: str | None = None
 
 
+class TestIn(BaseModel):
+    baseline: str
+    candidate: str
+    tests: list[str] = ["e2e", "perplexity", "side_by_side"]
+    prompt: str | None = None
+    max_new_tokens: int = 64
+    num_prompts: int = 8
+    corpus: str | None = None
+    device: str = "CPU"
+
+
 class OpenDirIn(BaseModel):
     path: str
 
@@ -345,6 +356,15 @@ def api_convert(body: ConvertIn):
         raise HTTPException(409, "Another task is running.")
     cfg = body.model_dump()
     task = manager.start("convert", cfg)
+    return {"task_id": task.id}
+
+
+@app.post("/api/test")
+def api_test(body: TestIn):
+    if manager.is_busy():
+        raise HTTPException(409, "Another task is running.")
+    cfg = body.model_dump()
+    task = manager.start("test", cfg)
     return {"task_id": task.id}
 
 
