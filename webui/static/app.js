@@ -91,7 +91,7 @@ async function loadInfo() {
   $("hf-base").value = "";
   const chips = $("versions");
   chips.innerHTML = "";
-  const v = state.info.resolved_versions && Object.keys(state.info.resolved_versions).length ? state.info.resolved_versions : state.info.versions;
+  const v = state.info.versions && Object.keys(state.info.versions).length ? state.info.versions : state.info.resolved_versions;
   for (const [k, val] of Object.entries(v)) {
     if (val == null) continue;
     chips.appendChild(el("span", "chip mono", `${k}=${val}`));
@@ -1489,21 +1489,24 @@ function updateGenaiDevice() {
     row.querySelectorAll("input").forEach((el) => { el.disabled = !genai.checked; });
   }
 }
+function stripModeSuffix(name) {
+  let base = String(name || "");
+  const tokens = ["-fp16", "-int2", "-int3", "-int4", "-int8", "-nf4", "-mxfp4", "-mxfp8", "-fp8e4m3", "-cb4", "-int2-mix", "-int3-mix", "-fp16-ov", "-ov"];
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const tok of tokens) {
+      if (base.endsWith(tok)) { base = base.slice(0, -tok.length); changed = true; }
+    }
+  }
+  return base;
+}
 function currentBase() {
   const v = $("cv-model").value;
-  if (state.cvInfo) return state.cvInfo.name;
+  if (state.cvInfo) return stripModeSuffix(state.cvInfo.name);
   if (v.startsWith("ov:")) {
     const p = v.slice(3).replace(/[\\/]+$/, "");
-    let base = p.split(/[\\/]/).pop() || p;
-    const tokens = ["-fp16", "-int2", "-int3", "-int4", "-int8", "-nf4", "-mxfp4", "-mxfp8", "-fp8e4m3", "-cb4", "-int2-mix", "-int3-mix", "-ov"];
-    let changed = true;
-    while (changed) {
-      changed = false;
-      for (const tok of tokens) {
-        if (base.endsWith(tok)) { base = base.slice(0, -tok.length); changed = true; }
-      }
-    }
-    return base;
+    return stripModeSuffix(p.split(/[\\/]/).pop() || p);
   }
   const t = $("cv-text").value.trim();
   if (t) return t.split(/[\\/]/).pop() || t;
@@ -1593,7 +1596,8 @@ async function updateCvChecks() {
         cvModesRefreshing = false;
       }
     }
-    errors.push("Mode \"" + m.id + "\" not available in the installed NNCF — upgrade NNCF (pip install -r requirements.txt) or pick a different mode. Run 'Self-test modes' to see which work. This is about the weight-compression mode, not your model.");
+    const nncf = (state.info && state.info.versions && state.info.versions.nncf) || "?";
+    errors.push("Mode \"" + m.id + "\" not available — this server's NNCF is " + nncf + " (needs ≥ 3.3.0). Restart the server with the openvino-latest env: python -m uvicorn webui.main:app. Run 'Self-test modes' to see which work.");
   }
   if (!state.cvInfo && !$("cv-text").value.trim() && !$("cv-model").value) errors.push("Choose a model.");
   const tf = state.cvTfreq;
