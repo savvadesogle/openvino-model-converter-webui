@@ -1807,7 +1807,7 @@ function renderTestResults(tests) {
     for (const p of sbs.prompts) {
       html += "<div class=\"sbs-block\">" +
         "<div class=\"sbs-prompt\">Q: <b>" + esc(p.prompt) + "</b>" +
-        " <span class=\"sbs-metrics\">FDT " + esc(p.fdt) + " · SDT " + esc(p.sdt) + " · exact " + esc(p.exact) + "%</span></div>" +
+        " <span class=\"sbs-metrics\">FDT " + esc(p.fdt) + " · SDT " + esc(p.sdt) + " · exact " + (Number(p.exact) === 1 ? "100%" : "0%") + "</span></div>" +
         "<div class=\"sbs-cols\">" +
         "<div class=\"sbs-col\"><div class=\"sbs-colhead\">Baseline</div><div class=\"code sbs-out\">" + esc(p.baseline) + "</div></div>" +
         "<div class=\"sbs-col\"><div class=\"sbs-colhead\">Candidate</div><div class=\"code sbs-out\">" + esc(p.candidate) + "</div></div>" +
@@ -2004,16 +2004,19 @@ async function startTask(kind, body, url) {
 function settleTaskStatus(d, kind) {
   state.taskSettled = true;
   const name = kind || state.taskKind || "task";
-  const cancelled = !!(d.error && /cancelled/i.test(d.error));
+  const cancelled = d.cancelled === true ||
+    (d.cancelled === undefined && !!(d.error && /cancelled/i.test(d.error)));
+  const failed = d.failed === true ||
+    (d.failed === undefined && d.returncode != null && d.returncode !== 0);
   if (cancelled) {
     $("task-status").textContent = name + " cancelled";
     $("task-status").className = "chip failed";
-  } else if (d.returncode === 0) {
-    $("task-status").textContent = name + " completed";
-    $("task-status").className = "chip done";
-  } else {
+  } else if (failed) {
     $("task-status").textContent = name + " FAILED";
     $("task-status").className = "chip failed";
+  } else {
+    $("task-status").textContent = name + " completed";
+    $("task-status").className = "chip done";
   }
 }
 function resetTaskUi(expectedId) {
@@ -2094,8 +2097,15 @@ async function pollStatus() {
     const s = await api("/api/task/status");
     $("task-cancel").disabled = !(s.busy);
     if (!state.taskSettled && s.task && s.task.kind) {
-      $("task-status").textContent = s.busy ? "running" : (s.done ? "finished" : "idle");
-      $("task-status").className = "chip " + (s.busy ? "busy" : s.done ? "done" : "");
+      if (s.busy) {
+        $("task-status").textContent = "running";
+        $("task-status").className = "chip busy";
+      } else if (s.done) {
+        settleTaskStatus(s, s.task.kind);
+      } else {
+        $("task-status").textContent = "idle";
+        $("task-status").className = "chip";
+      }
     }
     if (s.task && s.task.kind) {
       const isDl = s.task.kind === "download";

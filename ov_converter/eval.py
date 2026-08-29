@@ -257,6 +257,7 @@ def side_by_side(baseline: str | Path, candidate: str | Path, *, log=None,
     if missing:
         return {
             "ok": False,
+            "status": "na",
             "reason": "side_by_side needs both model dirs; missing: " + ", ".join(missing),
         }
     tok_b = AutoTokenizer.from_pretrained(str(d_b))
@@ -325,23 +326,30 @@ def side_by_side(baseline: str | Path, candidate: str | Path, *, log=None,
     for p, bo, co in zip(prompts, base_outs, cand_outs):
         bt = tok(bo, add_special_tokens=False)["input_ids"]
         ct = tok(co, add_special_tokens=False)["input_ids"]
-        L = max(len(bt), 1)
-        nmin = min(len(bt), len(ct))
-        fdt = next((i for i in range(nmin) if bt[i] != ct[i]), nmin)
-        sdt = sum(1 for i in range(nmin) if bt[i] != ct[i]) + abs(len(bt) - len(ct))
-        exact = 1 if bt == ct else 0
-        fdt_n = round(fdt / L, 3)
-        sdt_n = round(sdt / L, 3)
+        if not bt and not ct:
+            fdt_n, sdt_n, exact = 0.0, 0.0, 1
+            explain = "Identical output"
+        elif not bt:
+            fdt_n, sdt_n, exact = 0.0, float(len(ct)), 0
+            explain = f"Empty baseline output; SDT {sdt_n} — full divergence"
+        else:
+            L = len(bt)
+            nmin = min(len(bt), len(ct))
+            fdt = next((i for i in range(nmin) if bt[i] != ct[i]), nmin)
+            sdt = sum(1 for i in range(nmin) if bt[i] != ct[i]) + abs(len(bt) - len(ct))
+            exact = 1 if bt == ct else 0
+            fdt_n = round(fdt / L, 3)
+            sdt_n = round(sdt / L, 3)
+            if exact:
+                explain = "Identical output"
+            else:
+                explain = (
+                    f"FDT {fdt_n} — first divergence at token {fdt_n * 100:.1f}% of reference; "
+                    f"SDT {sdt_n} — ~{sdt_n * 100:.0f}% of tokens differ"
+                )
         fdt_vals.append(fdt_n)
         sdt_vals.append(sdt_n)
         exact_vals.append(exact)
-        if exact:
-            explain = "Identical output"
-        else:
-            explain = (
-                f"FDT {fdt_n} — first divergence at token {fdt_n * 100:.1f}% of reference; "
-                f"SDT {sdt_n} — ~{sdt_n * 100:.0f}% of tokens differ"
-            )
         rows.append({
             "prompt": p,
             "baseline": _clean(bo)[:_PROMPT_LIMIT],
@@ -361,6 +369,10 @@ def side_by_side(baseline: str | Path, candidate: str | Path, *, log=None,
 
 
 def _decorate_e2e(res: dict, cand_name: str) -> dict:
+    # ok/status convention: ok reflects EXECUTION (True = ran to completion),
+    # status the VERDICT. e2e has no "completed but degraded" state, so
+    # ok:false == genuine failure (status "bad", rc=1); ok:true == completed
+    # (status "ok", rc=0).
     res["label"] = "E2E GenAI smoke"
     if res.get("ok"):
         tp = res.get("tok_per_s")
@@ -432,10 +444,19 @@ def _decorate_perplexity(res: dict, bname: str, cname: str, corpus_info: dict) -
 def _decorate_sbs(res: dict, bname: str, cname: str) -> dict:
     res["label"] = "Side-by-side generation"
     if not res.get("ok"):
-        res["status"] = "na"
-        msg = res.get("reason") or res.get("error") or "see details"
-        res["summary"] = f"Side-by-side skipped — {msg}"
-        res["details"] = f"Token-level comparison of {bname} vs {cname} could not be run.\n{msg}"
+        # Deliberate skip (missing dirs / tokenizer mismatch) is ok:false with
+        # status "na"; any other non-ok result (e.g. a raised exception) is a
+        # genuine failure and must NOT masquerade as a skip.
+        if res.get("status") == "na":
+            msg = res.get("reason") or res.get("error") or "see details"
+            res["status"] = "na"
+            res["summary"] = f"Side-by-side skipped — {msg}"
+            res["details"] = f"Token-level comparison of {bname} vs {cname} could not be run.\n{msg}"
+            return res
+        res["status"] = "bad"
+        msg = res.get("error") or res.get("reason") or "see details"
+        res["summary"] = f"Side-by-side failed — {msg}"
+        res["details"] = f"Token-level comparison of {bname} vs {cname} failed.\n{msg}"
         return res
     ex = res.get("exact_match_pct", 0.0)
     n = len(res.get("prompts", []))
@@ -475,7 +496,11 @@ def _done_detail(name: str, res: dict) -> str:
     if name == "e2e":
         return f"{res.get('tok_per_s')} tok/s"
     if name == "perplexity":
+        b = res.get("baseline") if isinstance(res.get("baseline"), dict) else None
         sub = res.get("candidate") if isinstance(res.get("candidate"), dict) else res
+        pb = b.get("ppl") if b is not None else None
+        if pb is not None:
+            return f"ppl={pb} → {sub.get('ppl')} over {sub.get('lines')} lines"
         return f"ppl={sub.get('ppl')} over {sub.get('lines')} lines"
     if name == "side_by_side":
         return f"avg_fdt={res.get('avg_fdt')} exact={res.get('exact_match_pct')}%"
@@ -515,7 +540,9 @@ def main() -> int:
         if d and not Path(d).exists():
             result[key + "_error"] = f"model dir not found: {d}"
             emit.fail("testing", f"{key} model dir not found: {d}")
-            rc = 1
+            emit.done("testing", f"rc=1")
+            emit.emit("META", "done", json.dumps(result, ensure_ascii=False, default=str))
+            return 1
 
     emit.start("corpus")
     corpus_file = str(Path(_cfg.corpus) if _cfg.corpus else DEFAULT_CORPUS)
@@ -538,6 +565,12 @@ def main() -> int:
     baseline_name = Path(_cfg.baseline).name if _cfg.baseline else ""
     candidate_name = Path(_cfg.candidate).name if _cfg.candidate else ""
 
+    # ok/status convention for every sub-test result:
+    #   ok     = the stage EXECUTED (ran to completion without exception/skip)
+    #   status = quality verdict: "ok"/"warn"/"bad" (ok stays True for warn/bad —
+    #            quality degradation must NOT fail the task, rc stays 0),
+    #            or "na" for a deliberate skip (ok False, rc unaffected).
+    # A non-ok, non-"na" result is a genuine failure -> emit fail + rc = 1.
     for i, name in enumerate(_cfg.tests):
         emit.start(name)
         res: dict | None = None
@@ -575,21 +608,32 @@ def main() -> int:
             else:
                 raise ValueError(f"unknown test: {name}")
         except Exception as e:  # noqa: BLE001
+            # genuine failure; the single terminal emit happens below, never here
             res = {"ok": False, "error": str(e)[:300]}
-            emit.fail(name, str(e)[:200])
 
-        res = _decorate_test(
-            name, res,
-            baseline_name=baseline_name,
-            candidate_name=candidate_name,
-            corpus_info=corpus_info,
-        )
+        try:
+            res = _decorate_test(
+                name, res,
+                baseline_name=baseline_name,
+                candidate_name=candidate_name,
+                corpus_info=corpus_info,
+            )
+        except Exception as e:  # noqa: BLE001
+            res = {"ok": False, "status": "bad", "error": str(e)[:300]}
+        if not isinstance(res, dict):
+            res = {"ok": False, "status": "bad", "error": f"non-dict result: {res!r}"}
+
         result["tests"][name] = res
-        if res.get("ok"):
+        status = res.get("status")
+        if status == "na":
+            msg = res.get("summary") or res.get("reason") or "skipped"
+            emit.done(name, f"na {str(msg)[:200]}")
+        elif res.get("ok"):
             emit.done(name, _done_detail(name, res))
         else:
             msg = res.get("summary") or res.get("reason") or res.get("error") or "failed"
             emit.fail(name, str(msg)[:200])
+            rc = 1
 
     emit.done("testing", f"rc={rc}")
     emit.emit("META", "done", json.dumps(result, ensure_ascii=False, default=str))
