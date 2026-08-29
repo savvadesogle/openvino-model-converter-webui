@@ -50,6 +50,7 @@ class ConvertConfig:
 class Emitter:
     def __init__(self) -> None:
         self.current: str = "validate"
+        self.failed: list[str] = []
 
     def emit(self, event: str, stage: str | None, payload: str = "") -> None:
         self.current = stage or self.current
@@ -66,6 +67,7 @@ class Emitter:
         self.emit("STAGE", stage, f"done {detail}")
 
     def fail(self, stage: str, message: str) -> None:
+        self.failed.append(stage)
         self.emit("STAGE", stage, f"fail {message}")
 
 
@@ -329,8 +331,9 @@ def main() -> int:
         print("usage: python -m ov_converter.pipeline <config.json>", file=sys.stderr)
         return 2
     cfg = load_config(sys.argv[1])
-    run(cfg)
-    return 0
+    emit = Emitter()
+    run(cfg, emit)
+    return 1 if emit.failed else 0
 
 
 if __name__ == "__main__":

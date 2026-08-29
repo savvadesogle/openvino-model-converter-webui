@@ -385,11 +385,13 @@ async def api_stream(task_id: str | None = None):
     async def gen():
         t = manager.current
         if task_id and (t is None or t.id != task_id):
+            old = manager.get(task_id)
             yield "event: done\n" + \
-                f"data: {json.dumps({'returncode': None, 'error': f'task {task_id} not found'}, ensure_ascii=False)}\n\n"
+                f"data: {json.dumps({'returncode': None, 'error': f'task {task_id} not found', 'kind': old.kind if old else None, 'not_found': old is None, 'stale': old is not None}, ensure_ascii=False)}\n\n"
             return
         if t is None:
-            yield "event: done\ndata: {}\n\n"
+            yield "event: done\n" + \
+                f"data: {json.dumps({'returncode': None, 'error': None, 'kind': None}, ensure_ascii=False)}\n\n"
             return
         idx = 0
         while True:
@@ -404,7 +406,7 @@ async def api_stream(task_id: str | None = None):
                     yield f"data: {json.dumps({'line': ln}, ensure_ascii=False)}\n\n"
                 idx += len(rest)
                 yield "event: done\n" + \
-                    f"data: {json.dumps({'returncode': t.returncode, 'error': t.error}, ensure_ascii=False)}\n\n"
+                    f"data: {json.dumps({'returncode': t.returncode, 'error': t.error, 'cancelled': t.cancelled, 'failed': t.failed()}, ensure_ascii=False)}\n\n"
                 return
             await asyncio.sleep(0.25)
 

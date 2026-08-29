@@ -10,9 +10,10 @@ const state = {
   taskActive: false, taskKind: null, dlFiles: null, dlSelected: null, dlLocalComplete: null, dlResources: null,
   tsInfo: null, tsBaseline: null, tsCandidate: null,
   validatedSub: null, dlSubDirty: false, validating: false, drives: [], hfEnvState: null,
-  streamResumed: false,
+  streamResumed: false, taskSettled: false,
 };
 let activeProgressId = null;
+let resumeStream = null;
 let dlLocalDebounce = null;
 let hfEnvDebounce = null;
 let cvModesRefreshing = false;
@@ -1862,27 +1863,35 @@ async function resumeTaskStream() {
   } catch (e) { return; }
   if (!s.task) return;
   const kind = s.task.kind;
+  const resumeTaskId = s.task.id || null;
   state.taskKind = kind;
-  if (s.task.id) state.currentTask = s.task.id;
+  if (resumeTaskId) state.currentTask = resumeTaskId;
   $("task-status").textContent = s.busy ? "running" : (s.done ? "finished" : "idle");
   $("task-status").className = "chip " + (s.busy ? "busy" : s.done ? "done" : "");
   if (kind === "test") renderStages("test");
   else renderStages(kind);
   $("task-panel").classList.remove("collapsed");
+  if (s.busy) setTaskBusy(kind);
+  if (resumeStream) { resumeStream.close(); resumeStream = null; }
   const es = new EventSource("/api/task/stream" + (s.task.id ? "?task_id=" + s.task.id : ""));
+  resumeStream = es;
   es.onmessage = (e) => {
     try { const d = JSON.parse(e.data); onTaskLine(d.line); } catch (err) { appendLog(e.data); }
   };
   es.addEventListener("done", (e) => {
+    if (resumeStream === es) resumeStream = null;
     es.close();
-    try {
-      const d = JSON.parse(e.data);
-      $("task-status").textContent = (d.returncode === 0 ? (state.taskKind ? state.taskKind + " completed" : "completed") : (state.taskKind ? state.taskKind + " FAILED" : "FAILED"));
-      $("task-status").className = "chip " + (d.returncode === 0 ? "done" : "failed");
-    } catch (err) {}
-    resetTaskUi();
+    let d;
+    try { d = JSON.parse(e.data); } catch (err) { d = { returncode: 0 }; }
+    if (state.currentTask !== resumeTaskId) return;
+    if (d.returncode == null) return;
+    settleTaskStatus(d, kind);
+    resetTaskUi(resumeTaskId);
   });
-  es.onerror = () => { es.close(); };
+  es.onerror = () => {
+    if (resumeStream === es) resumeStream = null;
+    es.close();
+  };
 }
 function renderStages(kind) {
   const box = $("stages");
@@ -1935,6 +1944,7 @@ function parseEvent(line) {
 function setTaskBusy(kind) {
   state.taskActive = true;
   state.taskKind = kind;
+  state.taskSettled = false;
   $("task-cancel").disabled = false;
   const isDl = kind === "download";
   const isTest = kind === "test";
@@ -1954,6 +1964,7 @@ function setTaskBusy(kind) {
 }
 async function startTask(kind, body, url) {
   setTaskBusy(kind);
+  if (resumeStream) { resumeStream.close(); resumeStream = null; }
   let id;
   try {
     id = (await api(url, { method: "POST", body: JSON.stringify(body) })).task_id;
@@ -1973,25 +1984,40 @@ async function startTask(kind, body, url) {
   };
   es.addEventListener("done", async (e) => {
     es.close();
-    try {
-      const d = JSON.parse(e.data);
-      if (d.returncode === 0) {
-        $("task-status").textContent = (state.taskKind ? state.taskKind + " completed" : "completed");
-        $("task-status").className = "chip done";
-      } else {
-        $("task-status").textContent = (state.taskKind ? state.taskKind + " FAILED" : "FAILED");
-        $("task-status").className = "chip failed";
-      }
-    }
-    catch (err) { $("task-status").textContent = "done"; $("task-status").className = "chip done"; }
-    const wasDl = state.taskKind === "download";
-    resetTaskUi();
-    if (wasDl) { await updateLocalStatus(); updateDlChecks(); }
+    let d;
+    try { d = JSON.parse(e.data); } catch (err) { d = { returncode: 0 }; }
+    if (state.currentTask !== id) return;
+    if (d.returncode == null) { resetTaskUi(id); return; }
+    settleTaskStatus(d, kind);
+    resetTaskUi(id);
+    if (kind === "download") { await updateLocalStatus(); updateDlChecks(); }
     loadModels(); loadInfo(); loadModes();
   });
-  es.onerror = () => { es.close(); $("task-status").textContent = "stream closed"; $("task-status").className = "chip"; resetTaskUi(); };
+  es.onerror = () => {
+    es.close();
+    if (state.currentTask !== id) return;
+    $("task-status").textContent = "stream closed";
+    $("task-status").className = "chip";
+    resetTaskUi(id);
+  };
 }
-function resetTaskUi() {
+function settleTaskStatus(d, kind) {
+  state.taskSettled = true;
+  const name = kind || state.taskKind || "task";
+  const cancelled = !!(d.error && /cancelled/i.test(d.error));
+  if (cancelled) {
+    $("task-status").textContent = name + " cancelled";
+    $("task-status").className = "chip failed";
+  } else if (d.returncode === 0) {
+    $("task-status").textContent = name + " completed";
+    $("task-status").className = "chip done";
+  } else {
+    $("task-status").textContent = name + " FAILED";
+    $("task-status").className = "chip failed";
+  }
+}
+function resetTaskUi(expectedId) {
+  if (expectedId != null && state.currentTask !== expectedId) return;
   state.taskActive = false;
   state.taskKind = null;
   $("task-cancel").disabled = true;
@@ -2067,9 +2093,11 @@ async function pollStatus() {
   try {
     const s = await api("/api/task/status");
     $("task-cancel").disabled = !(s.busy);
-    if (s.task && s.task.kind) {
+    if (!state.taskSettled && s.task && s.task.kind) {
       $("task-status").textContent = s.busy ? "running" : (s.done ? "finished" : "idle");
       $("task-status").className = "chip " + (s.busy ? "busy" : s.done ? "done" : "");
+    }
+    if (s.task && s.task.kind) {
       const isDl = s.task.kind === "download";
       const isTest = s.task.kind === "test";
       $("dl-spinner").hidden = !(s.busy && isDl);
@@ -2080,6 +2108,7 @@ async function pollStatus() {
       $("ts-cancel").hidden = !(s.busy && isTest);
       $("ts-run").disabled = !!s.busy;
     } else {
+      if (!state.taskSettled) { $("task-status").textContent = "idle"; $("task-status").className = "chip"; }
       $("dl-spinner").hidden = true;
       $("cv-spinner").hidden = true;
       $("dl-cancel").hidden = true;

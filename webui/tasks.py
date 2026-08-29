@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import threading
 import time
@@ -12,6 +13,25 @@ from pathlib import Path
 import ov_converter.settings as S
 
 PROJECT_DIR = S.PROJECT_DIR
+
+_STAGE_FAIL_RE = re.compile(r"^@@STAGE\s+(\S+)\s*\|\s*fail\s*(.*)$")
+_SECRET_KEY_HINTS = ("token", "password", "passwd", "secret", "api_key", "apikey",
+                     "authorization", "credential")
+
+
+def _redact_secrets(value):
+    """Recursively replace values of secret-looking keys; never send them to the client."""
+    if isinstance(value, dict):
+        out = {}
+        for k, v in value.items():
+            if isinstance(k, str) and any(h in k.lower() for h in _SECRET_KEY_HINTS):
+                out[k] = "<redacted>" if v not in (None, "") else v
+            else:
+                out[k] = _redact_secrets(v)
+        return out
+    if isinstance(value, list):
+        return [_redact_secrets(v) for v in value]
+    return value
 
 _TASK_MODULES = {
     "download": "ov_converter.pipeline",
@@ -29,6 +49,7 @@ class Task:
         self.finished_at: float | None = None
         self.returncode: int | None = None
         self.error: str | None = None
+        self.cancelled: bool = False
         self.lines: list[str] = []
         self._lock = threading.Lock()
         self._proc: subprocess.Popen | None = None
@@ -48,6 +69,21 @@ class Task:
 
     def is_done(self) -> bool:
         return self.finished_at is not None
+
+    def failed(self) -> bool:
+        """True if any @@STAGE ... | fail marker was emitted (works even if rc==0)."""
+        with self._lock:
+            return any(_STAGE_FAIL_RE.match(ln) for ln in self.lines)
+
+    def _last_failure_message(self) -> str | None:
+        msg = None
+        with self._lock:
+            for line in self.lines:
+                m = _STAGE_FAIL_RE.match(line)
+                if m:
+                    stage, detail = m.group(1), m.group(2).strip()
+                    msg = f"{stage}: {detail}" if detail else f"{stage}: failed"
+        return msg
 
     # -- lifecycle ------------------------------------------------------
     def start(self) -> None:
@@ -85,7 +121,7 @@ class Task:
         self.returncode = rc
         self.finished_at = time.time()
         if rc != 0 and not self.error:
-            self.error = f"pipeline exited with code {rc}"
+            self.error = self._last_failure_message() or f"pipeline exited with code {rc}"
 
     def cancel(self) -> None:
         if self._proc and self._proc.poll() is None:
@@ -99,6 +135,7 @@ class Task:
                     self._proc.kill()
                 except Exception:  # noqa: BLE001
                     pass
+            self.cancelled = True
             self.error = "cancelled by user"
 
 
@@ -126,10 +163,18 @@ class TaskManager:
         if t:
             t.cancel()
 
+    def get(self, task_id: str) -> Task | None:
+        """Look a task up in history (used to report a stale/not-found stream id)."""
+        with self._lock:
+            for t in reversed(self.history):
+                if t.id == task_id:
+                    return t
+        return None
+
     def status(self) -> dict:
         t = self.current
         if t is None:
-            return {"busy": False, "task": None}
+            return {"busy": False, "done": False, "task": None}
         return {
             "busy": t.is_running(),
             "done": t.is_done(),
@@ -140,8 +185,10 @@ class TaskManager:
                 "finished_at": t.finished_at,
                 "returncode": t.returncode,
                 "error": t.error,
+                "cancelled": t.cancelled,
+                "failed": t.failed(),
                 "line_count": len(t.since(0)),
-                "config": t.config,
+                "config": _redact_secrets(t.config),
             },
         }
 
